@@ -1,0 +1,60 @@
+receivers:
+  docker_stats:
+    endpoint: unix:///var/run/docker.sock
+    collection_interval: 10s
+    timeout: 20s
+    api_version: "1.41"
+  
+  hostmetrics:
+    collection_interval: 10s
+    scrapers:
+      cpu:
+      memory:
+      disk:
+      network:
+      filesystem:
+  
+  # Scrape PostgreSQL exporters
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: 'postgres-shards'
+          scrape_interval: 15s
+          static_configs:
+            - targets: 
+              - 'postgres-exporter-shard1:9187'
+              - 'postgres-exporter-shard2:9187'
+              - 'postgres-exporter-shard3:9187'
+              - 'postgres-exporter-shard4:9187'
+          metric_relabel_configs:
+            # Add shard identifier from instance
+            - source_labels: [instance]
+              regex: 'postgres-exporter-(.*):(.*)'
+              target_label: shard
+              replacement: '$1'
+
+processors:
+  resource:
+    attributes:
+      - key: service.name
+        value: "sharded-db-monitoring"
+        action: insert
+  
+  batch:
+    timeout: 10s
+
+exporters:
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+    resource_to_telemetry_conversion:
+      enabled: true
+  
+  debug:
+    verbosity: basic
+
+service:
+  pipelines:
+    metrics:
+      receivers: [hostmetrics, docker_stats, prometheus]
+      processors: [resource, batch]
+      exporters: [prometheus, debug]

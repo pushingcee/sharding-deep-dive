@@ -1,0 +1,58 @@
+from typing import Tuple
+
+from utilities.commons.db_config import DbConfig
+
+# Database Configuration
+DEFAULT_NUM_SHARDS = 4
+SHARD_PORTS = (5432, 5433, 5434, 5435, 5436)
+
+
+CHECK_IF_DB_EXISTS = "SELECT 1 FROM pg_database WHERE datname = %s"
+"""
+Constants for database setup and data generation.
+This module contains all hardcoded values used throughout the database setup
+and data generation process to make the code more maintainable and configurable.
+"""
+SHARD_CONFIGS: Tuple[DbConfig, DbConfig, DbConfig, DbConfig] = (
+    DbConfig(port=SHARD_PORTS[0]),
+    DbConfig(port=SHARD_PORTS[1]),
+    DbConfig(port=SHARD_PORTS[2]),
+    DbConfig(port=SHARD_PORTS[3])
+)
+
+# Logging Intervals
+USER_LOG_INTERVAL = 10000
+PRODUCT_LOG_INTERVAL = 1000
+ORDER_LOG_INTERVAL = 1000
+
+# Batch Processing
+DEFAULT_USER_BATCH_SIZE_SHARDED = 50000
+DEFAULT_USER_BATCH_SIZE_SINGLE = 50000
+DEFAULT_PRODUCT_FETCH_LIMIT_SHARDED = 50000
+DEFAULT_PRODUCT_FETCH_LIMIT_SINGLE = 50000
+DEFAULT_BATCH_SIZE = 50000
+
+# Random Generation Parameters
+ORDERS_VARIANCE = 0
+ITEMS_VARIANCE = 0
+MIN_ITEMS_PER_ORDER = 1
+MAX_QUANTITY_PER_ITEM = 5
+MIN_QUANTITY_PER_ITEM = 1
+
+# Order Amount Range
+MIN_ORDER_AMOUNT = 10.0
+MAX_ORDER_AMOUNT = 3000.0
+ORDER_AMOUNT_DECIMAL_PLACES = 2
+
+# Order Statuses
+ORDER_STATUSES = ['pending', 'shipped', 'delivered', 'cancelled']
+
+# Exit Codes
+EXIT_SUCCESS = 0
+EXIT_FAILURE = 1
+
+# CLI Default Values
+DEFAULT_USERS_COUNT = 1000
+DEFAULT_PRODUCTS_COUNT = 500
+DEFAULT_ORDERS_PER_USER = 5
+DEFAULT_ITEMS_PER_ORDER = 3 

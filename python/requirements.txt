@@ -1,0 +1,4 @@
+# requirements.txt
+psycopg[binary]
+psycopg-pool
+Faker

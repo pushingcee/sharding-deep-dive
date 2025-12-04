@@ -1,0 +1,23 @@
+version: '3.9'
+
+volumes:
+  single_data:
+
+services:
+  single_instance:
+    image: postgres:16
+    container_name: single_instance 
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: mydb
+      POSTGRES_HOST_AUTH_METHOD: trust
+    volumes:
+      - single_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d mydb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "5432:5432"
+

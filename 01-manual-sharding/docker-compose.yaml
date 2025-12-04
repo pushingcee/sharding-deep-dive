@@ -1,0 +1,154 @@
+version: '3.9'
+x-shard-common: &shard-common
+  image: postgres:16
+  environment:
+    POSTGRES_USER: postgres
+    POSTGRES_DB: mydb
+    POSTGRES_HOST_AUTH_METHOD: trust
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U postgres -d mydb"]
+    interval: 5s
+    timeout: 5s
+    retries: 10
+  tmpfs: /var/lib/postgresql/data
+  volumes:
+    - ./postgresql.conf:/etc/postgresql/postgresql.conf:ro
+    - ./init-pg-stat-statements.sql:/docker-entrypoint-initdb.d/01-init-pg-stat-statements.sql:ro
+  command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
+
+services:
+  shard-1:
+    <<: *shard-common
+    container_name: shard-1
+    ports:
+      - "5433:5432"
+  
+  shard-2:
+    <<: *shard-common
+    container_name: shard-2
+    ports:
+      - "5434:5432"
+  
+  shard-3:
+    <<: *shard-common
+    container_name: shard-3
+    ports:
+      - "5435:5432"
+  
+  shard-4:
+    <<: *shard-common
+    container_name: shard-4
+    ports:
+      - "5436:5432"
+  
+  # PostgreSQL Exporters
+  postgres-exporter-shard1:
+    image: prometheuscommunity/postgres-exporter:latest
+    container_name: postgres-exporter-shard1
+    environment:
+      DATA_SOURCE_NAME: "postgresql://postgres@shard-1:5432/mydb?sslmode=disable"
+      PG_EXPORTER_DISABLE_DEFAULT_METRICS: "false"
+      PG_EXPORTER_DISABLE_SETTINGS_METRICS: "false"
+      PG_EXPORTER_EXTEND_QUERY_PATH: "/etc/postgres_exporter/queries.yaml"
+    ports:
+      - "9187:9187"
+    volumes:
+      - ./postgres-exporter-queries.yaml:/etc/postgres_exporter/queries.yaml:ro
+    depends_on:
+      shard-1:
+        condition: service_healthy
+  
+  postgres-exporter-shard2:
+    image: prometheuscommunity/postgres-exporter:latest
+    container_name: postgres-exporter-shard2
+    environment:
+      DATA_SOURCE_NAME: "postgresql://postgres@shard-2:5432/mydb?sslmode=disable"
+      PG_EXPORTER_DISABLE_DEFAULT_METRICS: "false"
+      PG_EXPORTER_DISABLE_SETTINGS_METRICS: "false"
+      PG_EXPORTER_EXTEND_QUERY_PATH: "/etc/postgres_exporter/queries.yaml"
+    ports:
+      - "9188:9187"
+    volumes:
+      - ./postgres-exporter-queries.yaml:/etc/postgres_exporter/queries.yaml:ro
+    depends_on:
+      shard-2:
+        condition: service_healthy
+  
+  postgres-exporter-shard3:
+    image: prometheuscommunity/postgres-exporter:latest
+    container_name: postgres-exporter-shard3
+    environment:
+      DATA_SOURCE_NAME: "postgresql://postgres@shard-3:5432/mydb?sslmode=disable"
+      PG_EXPORTER_DISABLE_DEFAULT_METRICS: "false"
+      PG_EXPORTER_DISABLE_SETTINGS_METRICS: "false"
+      PG_EXPORTER_EXTEND_QUERY_PATH: "/etc/postgres_exporter/queries.yaml"
+    ports:
+      - "9189:9187"
+    volumes:
+      - ./postgres-exporter-queries.yaml:/etc/postgres_exporter/queries.yaml:ro
+    depends_on:
+      shard-3:
+        condition: service_healthy
+  
+  postgres-exporter-shard4:
+    image: prometheuscommunity/postgres-exporter:latest
+    container_name: postgres-exporter-shard4
+    environment:
+      DATA_SOURCE_NAME: "postgresql://postgres@shard-4:5432/mydb?sslmode=disable"
+      PG_EXPORTER_DISABLE_DEFAULT_METRICS: "false"
+      PG_EXPORTER_DISABLE_SETTINGS_METRICS: "false"
+      PG_EXPORTER_EXTEND_QUERY_PATH: "/etc/postgres_exporter/queries.yaml"
+    ports:
+      - "9190:9187"
+    volumes:
+      - ./postgres-exporter-queries.yaml:/etc/postgres_exporter/queries.yaml:ro
+    depends_on:
+      shard-4:
+        condition: service_healthy
+  
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: otel-collector
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    user: 10001:960
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "8888:8888"
+      - "8889:8889"
+    depends_on:
+      - postgres-exporter-shard1
+      - postgres-exporter-shard2
+      - postgres-exporter-shard3
+      - postgres-exporter-shard4
+  
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      - otel-collector
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_SECURITY_ADMIN_USER=admin
+    volumes:
+      - grafana-storage:/var/lib/grafana
+    depends_on:
+      - prometheus
+
+volumes:
+  grafana-storage:

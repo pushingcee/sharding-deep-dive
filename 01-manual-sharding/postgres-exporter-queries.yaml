@@ -1,0 +1,73 @@
+# Custom queries specific to sharding monitoring
+pg_shard:
+  query: |
+    SELECT 
+      current_database() as shard_name,
+      pg_database_size(current_database()) as size_bytes,
+      (SELECT count(*) FROM pg_stat_activity WHERE state = 'active') as active_connections,
+      (SELECT count(*) FROM pg_stat_activity) as total_connections
+  master: true
+  metrics:
+    - shard_name:
+        usage: "LABEL"
+        description: "Name of the shard"
+    - size_bytes:
+        usage: "GAUGE"
+        description: "Size of the shard in bytes"
+    - active_connections:
+        usage: "GAUGE"
+        description: "Number of active connections"
+    - total_connections:
+        usage: "GAUGE"
+        description: "Total number of connections"
+
+pg_table_distribution:
+  query: |
+    SELECT 
+      schemaname,
+      relname as tablename,
+      pg_total_relation_size(schemaname||'.'||relname) as table_size_bytes,
+      n_tup_ins as rows_inserted,
+      n_tup_upd as rows_updated,
+      n_tup_del as rows_deleted,
+      n_live_tup as live_rows
+    FROM pg_stat_user_tables
+  metrics:
+    - schemaname:
+        usage: "LABEL"
+    - tablename:
+        usage: "LABEL"
+    - table_size_bytes:
+        usage: "GAUGE"
+    - rows_inserted:
+        usage: "COUNTER"
+    - rows_updated:
+        usage: "COUNTER"
+    - rows_deleted:
+        usage: "COUNTER"
+    - live_rows:
+        usage: "GAUGE"
+
+pg_shard_query_stats:
+  query: |
+    SELECT 
+      queryid::text,
+      calls,
+      total_exec_time,
+      mean_exec_time,
+      rows
+    FROM pg_stat_statements
+    WHERE query NOT LIKE '%pg_stat%'
+    ORDER BY total_exec_time DESC
+    LIMIT 20
+  metrics:
+    - queryid:
+        usage: "LABEL"
+    - calls:
+        usage: "COUNTER"
+    - total_exec_time:
+        usage: "COUNTER"
+    - mean_exec_time:
+        usage: "GAUGE"
+    - rows:
+        usage: "COUNTER"

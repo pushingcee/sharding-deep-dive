@@ -1,0 +1,29 @@
+version: '3.8'
+services:
+  single_instance:
+    image: postgres:16
+    container_name: single_instance
+    environment:
+      POSTGRES_DB: mydb
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ""
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5432:5432"
+    volumes:
+      - single_data:/var/lib/postgresql/data
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'       # Full CPU for single instance
+          memory: 512M      # Full memory for single instance
+    command: >
+      postgres 
+      -c shared_buffers=128MB 
+      -c effective_cache_size=256MB
+      -c work_mem=8MB
+
+volumes:
+  single_data:
+    external: true
+    name: 00-single-db_single_data

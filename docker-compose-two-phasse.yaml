@@ -1,0 +1,103 @@
+version: '3.9'
+
+volumes:
+  postgres_data:
+
+services:
+
+  db-setup:
+    image: postgres:16
+    container_name: postgres_setup_phase
+    profiles: ["setup"] # Only run when 'setup' profile is active
+    restart: no # Should only run once for setup
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: mydb
+      POSTGRES_HOST_AUTH_METHOD: trust
+      LOG_LEVEL: DEBUG
+    volumes:
+      - postgres_data:/var/lib/postgresql/data # Use the named volume
+    healthcheck: # Basic check for readiness
+      test: ["CMD-SHELL", "pg_isready -U postgres -d mydb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  client-setup:
+    build: # Build a small image with dependencies
+      context: .
+      dockerfile_inline: |
+        FROM python:3.11-slim
+        WORKDIR /app
+        COPY requirements.txt .
+        RUN pip install --no-cache-dir -r requirements.txt
+        COPY dbsetup-3.py .
+    container_name: data_loader
+    profiles: ["setup"] # Only run when 'setup' profile is active
+    restart: no
+    depends_on:
+      db-setup:
+        condition: service_healthy # Wait for db-setup to be ready
+    environment:
+      # Pass connection details for the setup database
+      PGHOST: db-setup
+      PGPORT: 5432
+      PGUSER: postgres
+      PGDATABASE: mydb
+      PGPASSWORD: 
+      # Optional: Set log level for your script if it reads env vars
+      LOG_LEVEL: DEBUG
+    # Command to run your script (adjust arguments as needed)
+    # Assumes your script reads connection details from environment variables
+    # Or add arguments like --host db-setup --user postgres etc.
+    command: >
+      sh -c "echo 'Waiting a few seconds for DB final init...' && sleep 15 &&
+             python dbsetup-3.py all --users=100000 --products=20000 &&
+             echo 'Data loading complete.'"
+
+  # --- Phase 2: Testing Services ---
+
+  db-test:
+    image: postgres:16
+    container_name: postgres_test_phase_slow
+    profiles: ["test"] # Only run when 'test' profile is active
+    restart: unless-stopped
+    environment:
+      # MUST use the same credentials as db-setup because it's using its data
+      POSTGRES_USER: postgres
+      POSTGRES_DB: mydb
+      POSTGRES_HOST_AUTH_METHOD: trust
+      # Optional: Tune PG settings for low resources if needed, e.g.
+      # POSTGRES_INITDB_ARGS: "--nosync" # Faster startup, less safe
+      # POSTGRES_EXTRA_FLAGS: "-c shared_buffers=64MB -c work_mem=16MB" # Example tuning
+    volumes:
+      - postgres_data:/var/lib/postgresql/data # Mount the SAME volume
+    deploy: # Apply resource limits
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M # Keep RAM very low for testing impact
+    healthcheck: # Check for readiness
+      test: ["CMD-SHELL", "pg_isready -U postgres -d mydb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports: # Optional: Expose slow DB on a different host port for direct inspection
+      - "5434:5432"
+
+  client-test:
+    image: postgres:16 # Using postgres image for psql client
+    container_name: query_tester_slow_db
+    profiles: ["test"] # Only run when 'test' profile is active
+    restart: unless-stopped
+    environment:
+      # Connect to the slow database service
+      PGHOST: db-test
+      PGPORT: 5432
+      PGUSER: postgres
+      PGDATABASE: mydb
+      PGPASSWORD: 
+    depends_on:
+      db-test:
+        condition: service_healthy # Wait for db-test to be ready
+    command: ["sleep", "infinity"] # Keep container running
