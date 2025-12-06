@@ -21,6 +21,7 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+.mypy_cache/
 
 # Virtual Environment
 .env
@@ -31,12 +32,17 @@ ENV/
 env.bak/
 venv.bak/
 
-# IDEs
+# IDEs and Tools
 .idea/
 .vscode/
 .cursor/
+.claude/
 *.swp
 *.swo
+
+# Java
+target/
+*.class
 
 # Project specific
 results.txt
