@@ -190,6 +190,19 @@ from utilities.generators.sharded_lookup import ShardedLookupGenerator
 
 ---
 
+## 11. Typing Standard
+
+The project uses `mypy --strict`. All new and moved code must satisfy this. Concretely:
+
+- Every function and method (including inner functions inside generators) must have fully annotated signatures
+- `namedtuple` usages in `data_factory.py` (`User`, `Product`, `Order`) are converted to `typing.NamedTuple` for mypy compatibility
+- `Callable` type hints use specific signatures rather than `Callable[[Any], None]` where the shape is known
+- `connection_manager.py` functions annotate `shard_configs` as `tuple[DbConfig, ...]` and return `list[Connection]`
+- No `Any` escapes without an explicit `# type: ignore` comment and a reason
+- After implementation, `mypy --strict python/` must pass clean
+
+---
+
 ## Out of Scope
 
 - No changes to SQL queries or schema
