@@ -23,4 +23,5 @@ class DbConfig:
     
     def __getitem__(self, key: str) -> str | int:
         """Support dict-like access for backward compatibility."""
-        return getattr(self, key)
+        value: str | int = getattr(self, key)
+        return value

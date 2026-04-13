@@ -1,0 +1,127 @@
+version: '3.9'
+
+# Benchmark configuration for Citus sharding (coordinator + 4 workers)
+# Uses constrained resources to amplify performance differences
+# Total resources: ~1.2 CPU, 640MB RAM (coordinator overhead + workers)
+# Coordinator: 0.2 CPU, 128MB RAM (query planning/routing)
+# Each worker: 0.25 CPU, 128MB RAM
+#
+# Usage:
+# 1. First, generate data using docker-compose-sharded-citus-refactored.yaml
+# 2. Stop containers: docker-compose -f docker-compose-sharded-citus-refactored.yaml down
+# 3. Start benchmark: docker-compose -f docker-compose.benchmark.yaml up -d
+#
+# Key insight: Citus automatically distributes queries across workers,
+# demonstrating transparent horizontal scaling with PostgreSQL compatibility.
+
+x-worker-benchmark: &worker-benchmark
+  image: citusdata/citus:13
+  shm_size: 32m
+  environment:
+    POSTGRES_USER: postgres
+    POSTGRES_DB: mydb
+    POSTGRES_HOST_AUTH_METHOD: trust
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U postgres -d mydb"]
+    interval: 5s
+    timeout: 5s
+    retries: 10
+  deploy:
+    resources:
+      limits:
+        cpus: '0.25'
+        memory: 128M
+      reservations:
+        cpus: '0.125'
+        memory: 64M
+  command: >
+    postgres
+    -c shared_buffers=32MB
+    -c effective_cache_size=64MB
+    -c work_mem=2MB
+    -c maintenance_work_mem=16MB
+    -c max_connections=20
+
+services:
+  master:
+    image: citusdata/citus:13
+    container_name: master
+    shm_size: 32m
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: mydb
+      POSTGRES_HOST_AUTH_METHOD: trust
+    volumes:
+      - master:/var/lib/postgresql/data
+    depends_on:
+      worker-1:
+        condition: service_healthy
+      worker-2:
+        condition: service_healthy
+      worker-3:
+        condition: service_healthy
+      worker-4:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d mydb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "5432:5432"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.2'
+          memory: 128M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    command: >
+      postgres
+      -c shared_buffers=32MB
+      -c effective_cache_size=64MB
+      -c work_mem=2MB
+      -c maintenance_work_mem=16MB
+      -c max_connections=30
+
+  worker-1:
+    <<: *worker-benchmark
+    container_name: worker-1
+    volumes:
+      - worker_1_data:/var/lib/postgresql/data
+
+  worker-2:
+    <<: *worker-benchmark
+    container_name: worker-2
+    volumes:
+      - worker_2_data:/var/lib/postgresql/data
+
+  worker-3:
+    <<: *worker-benchmark
+    container_name: worker-3
+    volumes:
+      - worker_3_data:/var/lib/postgresql/data
+
+  worker-4:
+    <<: *worker-benchmark
+    container_name: worker-4
+    volumes:
+      - worker_4_data:/var/lib/postgresql/data
+
+volumes:
+  master:
+    external: true
+    name: 02-citus-sharding_master
+  worker_1_data:
+    external: true
+    name: 02-citus-sharding_worker_1_data
+  worker_2_data:
+    external: true
+    name: 02-citus-sharding_worker_2_data
+  worker_3_data:
+    external: true
+    name: 02-citus-sharding_worker_3_data
+  worker_4_data:
+    external: true
+    name: 02-citus-sharding_worker_4_data

@@ -1,0 +1,90 @@
+version: '3.9'
+
+# Benchmark configuration for manual sharding (4 shards)
+# Uses constrained resources to amplify performance differences
+# Total resources: 1.0 CPU, 512MB RAM (same as single DB benchmark)
+# Each shard: 0.25 CPU, 128MB RAM
+#
+# Usage:
+# 1. First, generate data using the main docker-compose.yaml
+# 2. Stop containers: docker-compose down
+# 3. Start benchmark: docker-compose -f docker-compose.benchmark.yaml up -d
+#
+# Key insight: With the same total resources as single DB, sharding enables
+# parallel query execution across shards, demonstrating scalability benefits.
+
+x-shard-benchmark: &shard-benchmark
+  image: postgres:16
+  shm_size: 32m
+  environment:
+    POSTGRES_DB: mydb
+    POSTGRES_USER: postgres
+    POSTGRES_HOST_AUTH_METHOD: trust
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U postgres -d mydb"]
+    interval: 5s
+    timeout: 5s
+    retries: 10
+  deploy:
+    resources:
+      limits:
+        cpus: '0.25'
+        memory: 128M
+      reservations:
+        cpus: '0.125'
+        memory: 64M
+  command: >
+    postgres
+    -c shared_buffers=32MB
+    -c effective_cache_size=64MB
+    -c work_mem=2MB
+    -c maintenance_work_mem=16MB
+    -c max_connections=20
+    -c random_page_cost=4.0
+
+services:
+  shard-1:
+    <<: *shard-benchmark
+    container_name: shard-1
+    ports:
+      - "5433:5432"
+    volumes:
+      - shard_1_data:/var/lib/postgresql/data
+
+  shard-2:
+    <<: *shard-benchmark
+    container_name: shard-2
+    ports:
+      - "5434:5432"
+    volumes:
+      - shard_2_data:/var/lib/postgresql/data
+
+  shard-3:
+    <<: *shard-benchmark
+    container_name: shard-3
+    ports:
+      - "5435:5432"
+    volumes:
+      - shard_3_data:/var/lib/postgresql/data
+
+  shard-4:
+    <<: *shard-benchmark
+    container_name: shard-4
+    ports:
+      - "5436:5432"
+    volumes:
+      - shard_4_data:/var/lib/postgresql/data
+
+volumes:
+  shard_1_data:
+    external: true
+    name: 01-manual-sharding_shard_1_data
+  shard_2_data:
+    external: true
+    name: 01-manual-sharding_shard_2_data
+  shard_3_data:
+    external: true
+    name: 01-manual-sharding_shard_3_data
+  shard_4_data:
+    external: true
+    name: 01-manual-sharding_shard_4_data

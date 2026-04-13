@@ -1,18 +1,43 @@
 #!/bin/bash
 
-# Define arrays for containers and volumes
 containers=(
-    "worker-1" "worker-2" "worker-3" "worker-4"
-    "single_instance" "master"
+    # Citus containers
+    "worker-1" "worker-2" "worker-3" "worker-4" "master"
+    # Single DB container
+    "single_instance"
+    # Manual sharding containers
     "shard-1" "shard-2" "shard-3" "shard-4"
+    # Lookup table container
     "lookup-table"
+    # Monitoring containers (01-manual-sharding)
+    "postgres-exporter-shard1" "postgres-exporter-shard2"
+    "postgres-exporter-shard3" "postgres-exporter-shard4"
+    "otel-collector" "prometheus" "grafana"
 )
 
+# Volume names as defined in docker-compose files
+# Docker Compose prefixes these with the project directory name
 volumes=(
-    "postgres_master"
-    "postgres_worker_1_data" "postgres_worker_2_data" "postgres_worker_3_data" "postgres_worker_4_data"
+    # 00-single-db volumes
     "00-single-db_single_data"
-    "shard_1_data" "shard_2_data" "shard_3_data" "shard_4_data"
+    # 01-manual-sharding volumes
+    "01-manual-sharding_shard_1_data"
+    "01-manual-sharding_shard_2_data"
+    "01-manual-sharding_shard_3_data"
+    "01-manual-sharding_shard_4_data"
+    "01-manual-sharding_grafana-storage"
+    # 02-citus-sharding volumes
+    "02-citus-sharding_master"
+    "02-citus-sharding_worker_1_data"
+    "02-citus-sharding_worker_2_data"
+    "02-citus-sharding_worker_3_data"
+    "02-citus-sharding_worker_4_data"
+    # 03-manual-sharding-lookup-table volumes
+    "03-manual-sharding-lookup-table_lookup_data"
+    "03-manual-sharding-lookup-table_shard_1_data"
+    "03-manual-sharding-lookup-table_shard_2_data"
+    "03-manual-sharding-lookup-table_shard_3_data"
+    "03-manual-sharding-lookup-table_shard_4_data"
 )
 
 stop_containers() {

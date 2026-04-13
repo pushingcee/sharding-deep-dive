@@ -40,9 +40,36 @@ venv.bak/
 *.swp
 *.swo
 
+# Python
+.pytest_cache/
+
 # Java
 target/
+*.jar
+*.war
+.mvn/
+mvnw
+mvnw.cmd
 *.class
+
+# Docker
+.env.local
+docker-compose.override.yml
+
+# PostgreSQL data volumes
+**/postgres-data/
+**/pgdata/
+
+# Benchmark results (generated, large files)
+benchmark/results/
+
+# CSV data files (generated, potentially large)
+data/
+*.csv
+
+# OS
+.DS_Store
+Thumbs.db
 
 # Project specific
 results.txt

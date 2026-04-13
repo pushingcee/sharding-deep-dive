@@ -1,8 +1,14 @@
-def create_lookup_table(cur):
+from typing import Any
+
+from psycopg import Cursor
+
+
+def create_lookup_table(cur: Cursor[Any]) -> None:
     cur.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto;")
     cur.execute(USERS_CREATE_LOOKUP_TABLE_QUERY)
 
-def create_tables(cur):
+
+def create_tables(cur: Cursor[Any]) -> None:
     cur.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto;")
     cur.execute(USERS_TABLE_QUERY)
     cur.execute(PRODUCTS_TABLE_QUERY)

@@ -2,6 +2,7 @@ version: '3.9'
 
 x-shard-common: &shard-common
   image: postgres:16
+  shm_size: 1g
   environment:
     POSTGRES_USER: postgres
     POSTGRES_DB: mydb
@@ -11,35 +12,51 @@ x-shard-common: &shard-common
     interval: 5s
     timeout: 5s
     retries: 10
-  tmpfs: /var/lib/postgresql/data
 
 services:
   lookup-table:
     <<: *shard-common
     container_name: lookup-table
+    volumes:
+      - lookup_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
 
   shard-1:
     <<: *shard-common
     container_name: shard-1
+    volumes:
+      - shard_1_data:/var/lib/postgresql/data
     ports:
       - "5433:5432"
 
   shard-2:
     <<: *shard-common
     container_name: shard-2
+    volumes:
+      - shard_2_data:/var/lib/postgresql/data
     ports:
       - "5434:5432"
 
   shard-3:
     <<: *shard-common
     container_name: shard-3
+    volumes:
+      - shard_3_data:/var/lib/postgresql/data
     ports:
       - "5435:5432"
 
   shard-4:
     <<: *shard-common
     container_name: shard-4
+    volumes:
+      - shard_4_data:/var/lib/postgresql/data
     ports:
-      - "5436:5432" 
+      - "5436:5432"
+
+volumes:
+  lookup_data:
+  shard_1_data:
+  shard_2_data:
+  shard_3_data:
+  shard_4_data:

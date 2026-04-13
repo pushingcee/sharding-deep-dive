@@ -1,0 +1,54 @@
+version: '3.9'
+
+# Benchmark configuration for single database
+# Uses constrained resources to amplify performance differences
+# Total resources: 1.0 CPU, 512MB RAM (matches total for sharded setup)
+#
+# Usage:
+# 1. First, generate data using the main docker-compose.yaml
+# 2. Stop containers: docker-compose down
+# 3. Start benchmark: docker-compose -f docker-compose.benchmark.yaml up -d
+#
+# The constrained resources simulate a production scenario where
+# database resources are limited, making optimization benefits more visible.
+
+services:
+  single_instance:
+    image: postgres:16
+    container_name: single_instance
+    shm_size: 128m
+    environment:
+      POSTGRES_DB: mydb
+      POSTGRES_USER: postgres
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5432:5432"
+    volumes:
+      - single_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d mydb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+    # Constrained PostgreSQL settings to amplify performance issues
+    command: >
+      postgres
+      -c shared_buffers=128MB
+      -c effective_cache_size=256MB
+      -c work_mem=4MB
+      -c maintenance_work_mem=64MB
+      -c max_connections=50
+      -c random_page_cost=4.0
+
+volumes:
+  single_data:
+    external: true
+    name: 00-single-db_single_data

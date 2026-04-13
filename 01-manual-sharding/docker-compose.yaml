@@ -1,46 +1,64 @@
 version: '3.9'
+
 x-shard-common: &shard-common
   image: postgres:16
+  shm_size: 1g
   environment:
     POSTGRES_USER: postgres
     POSTGRES_DB: mydb
     POSTGRES_HOST_AUTH_METHOD: trust
   healthcheck:
-    test: ["CMD-SHELL", "pg_isready -U postgres -d mydb"]
+    test: [ "CMD-SHELL", "pg_isready -U postgres -d mydb" ]
     interval: 5s
     timeout: 5s
     retries: 10
-  tmpfs: /var/lib/postgresql/data
-  volumes:
-    - ./postgresql.conf:/etc/postgresql/postgresql.conf:ro
-    - ./init-pg-stat-statements.sql:/docker-entrypoint-initdb.d/01-init-pg-stat-statements.sql:ro
-  command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
+  command: [ "postgres", "-c", "config_file=/etc/postgresql/postgresql.conf", "-c", "hba_file=/etc/postgresql/pg_hba.conf" ]
 
 services:
   shard-1:
     <<: *shard-common
     container_name: shard-1
+    volumes:
+      - shard_1_data:/var/lib/postgresql/data
+      - ./postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      - ./init-pg-stat-statements.sql:/docker-entrypoint-initdb.d/01-init-pg-stat-statements.sql:ro
     ports:
       - "5433:5432"
-  
+
   shard-2:
     <<: *shard-common
     container_name: shard-2
+    volumes:
+      - shard_2_data:/var/lib/postgresql/data
+      - ./postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      - ./init-pg-stat-statements.sql:/docker-entrypoint-initdb.d/01-init-pg-stat-statements.sql:ro
     ports:
       - "5434:5432"
-  
+
   shard-3:
     <<: *shard-common
     container_name: shard-3
+    volumes:
+      - shard_3_data:/var/lib/postgresql/data
+      - ./postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      - ./init-pg-stat-statements.sql:/docker-entrypoint-initdb.d/01-init-pg-stat-statements.sql:ro
     ports:
       - "5435:5432"
-  
+
   shard-4:
     <<: *shard-common
     container_name: shard-4
+    volumes:
+      - shard_4_data:/var/lib/postgresql/data
+      - ./postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      - ./init-pg-stat-statements.sql:/docker-entrypoint-initdb.d/01-init-pg-stat-statements.sql:ro
     ports:
       - "5436:5432"
-  
+
   # PostgreSQL Exporters
   postgres-exporter-shard1:
     image: prometheuscommunity/postgres-exporter:latest
@@ -57,7 +75,7 @@ services:
     depends_on:
       shard-1:
         condition: service_healthy
-  
+
   postgres-exporter-shard2:
     image: prometheuscommunity/postgres-exporter:latest
     container_name: postgres-exporter-shard2
@@ -73,7 +91,7 @@ services:
     depends_on:
       shard-2:
         condition: service_healthy
-  
+
   postgres-exporter-shard3:
     image: prometheuscommunity/postgres-exporter:latest
     container_name: postgres-exporter-shard3
@@ -89,7 +107,7 @@ services:
     depends_on:
       shard-3:
         condition: service_healthy
-  
+
   postgres-exporter-shard4:
     image: prometheuscommunity/postgres-exporter:latest
     container_name: postgres-exporter-shard4
@@ -105,11 +123,11 @@ services:
     depends_on:
       shard-4:
         condition: service_healthy
-  
+
   otel-collector:
     image: otel/opentelemetry-collector-contrib:latest
     container_name: otel-collector
-    command: ["--config=/etc/otel-collector-config.yaml"]
+    command: [ "--config=/etc/otel-collector-config.yaml" ]
     volumes:
       - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -124,7 +142,7 @@ services:
       - postgres-exporter-shard2
       - postgres-exporter-shard3
       - postgres-exporter-shard4
-  
+
   prometheus:
     image: prom/prometheus:latest
     container_name: prometheus
@@ -152,3 +170,7 @@ services:
 
 volumes:
   grafana-storage:
+  shard_1_data:
+  shard_2_data:
+  shard_3_data:
+  shard_4_data:

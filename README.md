@@ -1,369 +1,134 @@
-# Database Sharding Exploration Project
+# Database Sharding Exploration
 
-A comprehensive comparison of PostgreSQL database architectures, from single instances to distributed sharding strategies. This project demonstrates four different approaches to scaling databases with an e-commerce use case.
+A hands-on playground for exploring and confirming my understanding of sharding in a practical way. Inspired largely by DDIA's chapter on partitioning and Notion's blog article ["Herding Elephants"](https://www.notion.so/blog/sharding-postgres-at-notion).
 
-## 📋 Table of Contents
+The initial idea was to just implement what I'd read about. With time it grew.
 
-- [Overview](#overview)
-- [Architecture Approaches](#architecture-approaches)
-- [Quick Start](#quick-start)
-- [Project Structure](#project-structure)
-- [Technology Stack](#technology-stack)
-- [Data Generation](#data-generation)
-- [Performance Testing](#performance-testing)
-- [Verification Scripts](#verification-scripts)
-- [Development](#development)
-- [Troubleshooting](#troubleshooting)
+## Long-term vision
 
-## 🎯 Overview
+- [x] Implement sharding: manual (hash-based) and via Citus
+- [x] Compare both approaches to single instance performance in constrained Docker containers to make differences visible on smaller datasets
+- [x] Add a lookup table sharding variant (shard routing via a central mapping table)
+- [x] Load test all strategies with Locust under equal total resource budgets
+- [ ] Implement a migration pipeline from a single PostgreSQL database to a Citus sharded database (Herding Elephants)
 
-This project implements an e-commerce data model across four different database architectures to demonstrate:
-
-- **Single Database**: Traditional PostgreSQL setup
-- **Manual Sharding**: Application-level sharding with consistent hashing
-- **Citus Sharding**: PostgreSQL extension for distributed databases
-- **Lookup Table Sharding**: Manual sharding with centralized routing table
-
-### Key Features
-
-- **Consistent Hashing**: Identical UUID-based sharding algorithm across Python and Java
-- **E-commerce Schema**: Users, Orders, Products, Order Items with realistic relationships
-- **Performance Testing**: Built-in queries for cross-shard analytics and load testing
-- **Docker Orchestration**: Complete containerized environments for each architecture
-- **Data Generation**: Faker-based synthetic data generation with configurable volumes
-
-## 🏗️ Architecture Approaches
+## Architecture approaches
 
 ### 1. Single Database (`00-single-db/`)
-- **Setup**: Single PostgreSQL 16 instance
-- **Port**: 5432
-- **Use Case**: Traditional monolithic database approach
-- **Pros**: Simple, ACID compliance, no complexity
-- **Cons**: Single point of failure, limited scalability
+One PostgreSQL 16 instance on port 5432. The baseline.
 
 ### 2. Manual Sharding (`01-manual-sharding/`)
-- **Setup**: 4 PostgreSQL instances (ports 5433-5436)
-- **Sharding Key**: user_id (UUID)
-- **Algorithm**: SHA-1 hash of UUID bytes modulo 4
-- **Data Co-location**: Orders and OrderItems co-located with Users
-- **Products**: Replicated across all shards (reference table)
-- **Routing**: Application-level in Java Spring Boot
+4 PostgreSQL instances (ports 5433–5436). Users are routed by `SHA-1(user_id.bytes) % 4`. Orders and order_items are co-located with their user. Products are replicated across all shards as a reference table. Routing happens at the application layer.
 
-### 3. Citus Sharding (`02-citus-sharding/`)
-- **Setup**: Citus coordinator + worker nodes
-- **Sharding**: Automatic distribution using Citus extension
-- **Management**: Built-in rebalancing and query planning
-- **Use Case**: PostgreSQL-native distributed computing
+### 3. Citus (`02-citus-sharding/`)
+Citus coordinator + 4 workers. Transparent to the application — connects to the coordinator like a regular PostgreSQL instance. Citus handles distribution and query planning internally.
 
 ### 4. Lookup Table Sharding (`03-manual-sharding-lookup-table/`)
-- **Setup**: 4 shards + centralized routing table
-- **Routing**: Database-stored shard location mapping
-- **Flexibility**: Dynamic shard assignment and migration capability
-- **Overhead**: Additional lookup query for routing
+Same 4-shard setup as manual sharding, but shard assignment is stored in a central `user_data_shard` table on a dedicated routing DB (port 5432). Slower to route but allows flexible shard reassignment without rehashing.
 
-## ⚡ Quick Start
+## Quick start
 
 ### Prerequisites
-```bash
-# Required tools
-docker && docker-compose
-python 3.8+
-java 23 (with Maven)
-git
-```
+- Docker + Docker Compose
+- Python 3.13+
+- Java 21+ with Maven
 
-### 1. Environment Setup
+### Setup
 ```bash
-# Clone and enter project
-git clone <repository-url>
-cd sharding_partitioning_postgres_claude
-
-# Setup Python environment
 cd python
-python -m venv .venv
-source .venv/bin/activate  # Linux/Mac
-# .venv\Scripts\activate   # Windows
+python -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
-cd ..
 ```
 
-### 2. Choose Your Architecture
-
-#### Single Database
+### Single database
 ```bash
-# Start database
-docker-compose -f 00-single-db/docker-compose.yaml up -d
-
-# Generate test data
-cd python
-python db_setup.py --mode single --users 10000 --products 1000 --orders-per-user 5
-
-# Start API
-cd ../java/e-commerce-simple-api
-mvn spring-boot:run
+cd 00-single-db && docker compose up -d
+cd ../python && python db_setup.py --mode single --users 10000 --products 1000 --orders-per-user 5
+cd ../java/e-commerce-simple-api && mvn spring-boot:run -Dspring-boot.run.profiles=single
 ```
 
-#### Manual Sharding
+### Manual sharding
 ```bash
-# Start sharded databases
-docker-compose -f 01-manual-sharding/docker-compose.yaml up -d
-
-# Generate distributed data
-cd python
-python db_setup.py --mode sharded --users 10000 --products 1000 --orders-per-user 5
-
-# Verify distribution
-../01-manual-sharding/verify-sharding.sh
-
-# Start API with sharded profile
-cd ../java/e-commerce-simple-api
-mvn spring-boot:run -Dspring-boot.run.profiles=sharded
+cd 01-manual-sharding && docker compose up -d
+cd ../python && python db_setup.py --mode sharded --users 10000 --products 1000 --orders-per-user 5
+bash ../01-manual-sharding/verify-sharding.sh
+cd ../java/e-commerce-simple-api && mvn spring-boot:run -Dspring-boot.run.profiles=sharded
 ```
 
-### 3. Test the API
+### Citus
 ```bash
-# Health check
-curl http://localhost:8080/actuator/health
+cd 02-citus-sharding
+docker compose -f docker-compose-sharded-citus-refactored.yaml up -d
+bash 01-disable-ssl.sh
+docker compose -f docker-compose-sharded-citus-refactored.yaml restart
+bash 02-set-workers-and-masters.sh
+cd ../python && python db_setup.py --mode single-shard --users 10000 --products 1000 --orders-per-user 5
+cd ../java/e-commerce-simple-api && mvn spring-boot:run -Dspring-boot.run.profiles=single
+```
 
-# Get user by ID
+### Lookup table sharding
+```bash
+cd 03-manual-sharding-lookup-table && docker compose up -d
+cd ../python && python db_setup.py --mode sharded-lookup-table --users 10000 --products 1000 --orders-per-user 5
+bash ../03-manual-sharding-lookup-table/verify-sharding-lookup.sh
+cd ../java/e-commerce-simple-api && mvn spring-boot:run -Dspring-boot.run.profiles=lookup
+```
+
+### Spring Boot profiles
+
+Each strategy requires an explicit profile — omitting it causes a startup failure.
+
+| Strategy | Profile flag |
+|---|---|
+| Single DB | `-Dspring-boot.run.profiles=single` |
+| Manual Sharding | `-Dspring-boot.run.profiles=sharded` |
+| Citus | `-Dspring-boot.run.profiles=single` |
+| Lookup Table | `-Dspring-boot.run.profiles=lookup` |
+
+### Test the API
+```bash
 curl http://localhost:8080/users/{user-id}
-
-# Run heavy analytics query
-curl http://localhost:8080/heavy-queries/user-order-analytics
+curl http://localhost:8080/orders/user/{user-id}
+curl http://localhost:8080/analytics
 ```
 
-## 📁 Project Structure
+## Load testing
 
-```
-├── 00-single-db/                    # Single database setup
-│   ├── docker-compose.yaml          # PostgreSQL single instance
-│   └── verify-single.sh            # Data verification
-├── 01-manual-sharding/             # Manual sharding setup
-│   ├── docker-compose.yaml         # 4 PostgreSQL instances
-│   └── verify-sharding.sh          # Shard distribution verification
-├── 02-citus-sharding/              # Citus distributed setup
-│   ├── docker-compose-sharded-citus.yaml
-│   └── verify-citus.sh
-├── 03-manual-sharding-lookup-table/ # Lookup table routing
-│   ├── docker-compose.yaml
-│   └── verify-sharding-lookup.sh
-├── python/                          # Data generation & utilities
-│   ├── db_setup.py                 # Main data generation script
-│   ├── requirements.txt            # Python dependencies
-│   └── utilities/
-│       ├── commons/
-│       │   ├── DataGenerator.py    # Faker-based data generation
-│       │   └── DbConfig.py         # Database configuration
-│       ├── database/
-│       │   ├── table_manager.py    # Schema management
-│       │   └── data_generator.py   # Data insertion logic
-│       └── generators/
-│           └── base_generator.py   # Base data generation
-├── java/e-commerce-simple-api/      # Spring Boot REST API
-│   ├── pom.xml                     # Maven dependencies
-│   ├── src/main/java/org/learn/
-│   │   ├── configuration/          # Database configurations
-│   │   │   ├── sharded/            # Manual sharding config
-│   │   │   │   ├── ShardRouter.java        # Consistent hashing
-│   │   │   │   └── ManualShardingDataSourceConfig.java
-│   │   │   ├── lookup/             # Lookup table config
-│   │   │   └── single/             # Single DB config
-│   │   ├── domain/                 # JPA entities
-│   │   │   ├── User.java
-│   │   │   ├── Order.java
-│   │   │   └── product/
-│   │   ├── repository/             # Data access layer
-│   │   │   ├── single/             # Single DB repositories
-│   │   │   ├── sharded/            # Sharded repositories
-│   │   │   └── lookup/             # Lookup table repositories
-│   │   ├── service/                # Business logic
-│   │   └── controller/             # REST endpoints
-│   └── src/main/resources/
-│       ├── application.properties          # Single DB config
-│       └── application-sharded.properties  # Sharded config
-└── cleanup.sh                      # Docker cleanup script
+Each strategy has a `docker-compose.benchmark.yaml` with constrained resources. All strategies get the same total budget (1 CPU / 512MB) split across their containers. The point is to answer whether architecture beats a single DB on equal hardware — not just "more hardware helps."
+
+```bash
+# Interactive mode — opens web UI at http://localhost:8089
+cd benchmark && ./run_benchmark.sh
+
+# Headless — 150 users, 15/s spawn, 3 minutes
+./run_benchmark.sh single 150 15 180s
+./run_benchmark.sh sharded 150 15 180s
+./run_benchmark.sh citus 150 15 180s
+./run_benchmark.sh lookup 150 15 180s
 ```
 
-## 🛠️ Technology Stack
+Three Locust user classes:
+- `QuickReadUser` (weight 3) — user lookups, order queries
+- `HeavyAnalyticsUser` (weight 1) — the `/analytics` endpoint, the key comparison point
+- `MixedWorkloadUser` (weight 2) — realistic 10:1 read-to-analytics ratio
 
-### Backend
-- **Java 23** with **Spring Boot 3.4.4**
-- **Spring Data JPA** for ORM
-- **PostgreSQL 16** database
-- **Maven** for dependency management
+See `docs/VERIFICATION_FINDINGS.md` for post-refactor functional verification results.
 
-### Data Generation
-- **Python 3.8+**
-- **psycopg 3** PostgreSQL adapter
-- **Faker** for synthetic data
-- **Threading** for parallel processing
+## Consistent hashing
 
-### Infrastructure
-- **Docker & Docker Compose** for orchestration
-- **Citus** PostgreSQL extension for distribution
-
-### Key Dependencies
-```xml
-<!-- Java -->
-<dependency>
-    <groupId>org.springframework.boot</groupId>
-    <artifactId>spring-boot-starter-data-jpa</artifactId>
-</dependency>
-<dependency>
-    <groupId>org.postgresql</groupId>
-    <artifactId>postgresql</artifactId>
-</dependency>
-```
+Python and Java implement identical sharding logic so a user inserted via the seed script is always found by the API:
 
 ```python
 # Python
-psycopg==3.1.18
-Faker==24.4.0
-```
-
-## 📊 Data Generation
-
-### Schema Overview
-```sql
--- Users table (sharded by user_id)
-users: id(UUID), name, email, address, phone, created_at
-
--- Orders table (co-located with users)
-orders: id(UUID), user_id(UUID), total_amount, status, created_at
-
--- Products table (reference table, replicated)
-products: id(UUID), name, price, category, description, stock
-
--- Order Items table (co-located with orders)
-order_items: order_id(UUID), product_id(UUID), quantity, price
-```
-
-### Generation Commands
-
-#### Single Database
-```bash
-cd python
-python db_setup.py --mode single --users 50000 --products 5000 --orders-per-user 3
-```
-
-#### Manual Sharding
-```bash
-cd python
-python db_setup.py --mode sharded --users 50000 --products 5000 --orders-per-user 3
-```
-
-#### Citus Sharding
-```bash
-cd python  
-python db_setup.py --mode citus --users 50000 --products 5000 --orders-per-user 3
-```
-
-#### Lookup Table Sharding
-```bash
-cd python
-python db_setup.py --mode lookup --users 50000 --products 5000 --orders-per-user 3
-```
-
-### Advanced Options
-```bash
-# Enable debug logging
-python db_setup.py --mode sharded --users 1000 --debug
-
-# Custom batch sizes
-python db_setup.py --mode single --users 100000 --batch-size 10000
-
-# Specify items per order
-python db_setup.py --mode sharded --users 10000 --items-per-order 5
-```
-
-## 📈 Performance Testing
-
-### Built-in Heavy Queries
-
-The project includes realistic analytics queries for performance testing:
-
-```bash
-# User order analytics (cross-shard aggregation)
-curl http://localhost:8080/heavy-queries/user-order-analytics
-
-# Product popularity analysis
-curl http://localhost:8080/heavy-queries/product-analytics  
-
-# Recent high-value orders
-curl http://localhost:8080/heavy-queries/high-value-orders
-```
-
-### Custom Performance Testing
-```java
-// Located in: HeavyQueryService.java
-public List<AnalyticsResult> getUserOrderAnalytics() {
-    // Complex cross-shard aggregation query
-    // Tests sharding performance under load
-}
-```
-
-## ✅ Verification Scripts
-
-### Verify Data Distribution
-```bash
-# Manual sharding verification
-./01-manual-sharding/verify-sharding.sh
-
-# Lookup table sharding verification  
-./03-manual-sharding-lookup-table/verify-sharding-lookup.sh
-
-# Citus distribution verification
-./02-citus-sharding/verify-citus.sh
-
-# Single database verification
-./00-single-db/verify-single.sh
-```
-
-Example output:
-```
-=== Shard Distribution Verification ===
-Shard 1 (port 5433): 12,487 users, 62,435 orders
-Shard 2 (port 5434): 12,513 users, 62,565 orders  
-Shard 3 (port 5435): 12,450 users, 62,250 orders
-Shard 4 (port 5436): 12,550 users, 62,750 orders
-Total: 50,000 users, 250,000 orders
-```
-
-## 🔧 Development
-
-### Running Different Profiles
-
-#### Single Database Profile (Default)
-```bash
-cd java/e-commerce-simple-api
-mvn spring-boot:run
-```
-
-#### Sharded Database Profile
-```bash
-cd java/e-commerce-simple-api
-mvn spring-boot:run -Dspring-boot.run.profiles=sharded
-```
-
-### Configuration Files
-- `application.properties`: Single database configuration
-- `application-sharded.properties`: Manual sharding configuration
-
-### Key Implementation Details
-
-#### Consistent Hashing Algorithm
-Both Python and Java implement identical sharding logic:
-
-```python
-# Python implementation
-def get_shard_index(user_id_uuid):
-    hash_digest = hashlib.sha1(user_id_uuid.bytes).digest()
-    hash_int = int.from_bytes(hash_digest[:8], 'big')
-    return hash_int % NUM_SHARDS
+def get_shard_index(key_uuid: UUID, num_shards: int = 4) -> int:
+    hash_digest = hashlib.sha1(key_uuid.bytes).digest()
+    hash_int = int.from_bytes(hash_digest[:8], "big")
+    return hash_int % num_shards
 ```
 
 ```java
-// Java implementation  
+// Java
 public int getShardIndex(UUID userId) {
     byte[] uuidBytes = convertUuidToBytes(userId);
     byte[] hashDigest = sha1.digest(uuidBytes);
@@ -372,80 +137,62 @@ public int getShardIndex(UUID userId) {
 }
 ```
 
-### Database Connection Configuration
+## Key learnings
 
-#### Sharded Configuration
-```java
-@Bean("shard1DataSource")
-public DataSource shard1DataSource() {
-    return DataSourceBuilder.create()
-        .url("jdbc:postgresql://localhost:5433/mydb")
-        .username("postgres")
-        .build();
-}
+- **Serial keys are gone.** Moving to sharding forces UUIDs. You have to think carefully about what your sharding key is and whether related rows across tables end up on the same shard — if not, joins happen at the application layer.
+- **Key selection is critical.** A poorly chosen key concentrates data on a single shard and defeats the purpose entirely.
+- **The lookup table pattern exists for a reason.** Storing `(user_id, shard_id)` in a central table makes future shard migrations or reassignments far less painful than rehashing everything.
+- **Citus is genuinely transparent.** The application connects to the coordinator exactly like a regular PostgreSQL instance. The tradeoff is the coordination overhead on every query.
+- **Equal resources is a harder test than equal shards.** Giving all strategies the same total CPU/memory budget makes the benchmark meaningful — it tests architecture, not hardware.
+
+## Project structure
+
+```
+├── 00-single-db/                         # Single PostgreSQL instance
+├── 01-manual-sharding/                   # 4 PostgreSQL instances, app-level routing
+├── 02-citus-sharding/                    # Citus coordinator + workers
+├── 03-manual-sharding-lookup-table/      # 4 shards + central routing DB
+├── benchmark/
+│   ├── locustfile.py                     # Locust test scenarios
+│   └── run_benchmark.sh                  # Benchmark runner
+├── python/
+│   ├── db_setup.py                       # CLI entry point
+│   └── utilities/
+│       ├── config.py                     # DbConfig
+│       ├── constants.py                  # Shard configs, defaults
+│       ├── connection_manager.py         # Connection pooling, shard helpers
+│       ├── data_factory.py               # Faker-based data generation
+│       ├── table_manager.py              # Schema creation per mode
+│       ├── queries.py                    # DDL statements
+│       ├── shard_utils.py                # get_shard_index, thread count
+│       └── generators/
+│           ├── base.py                   # BaseGenerator, generate_products_base
+│           ├── single.py                 # SingleGenerator
+│           ├── sharded.py                # ShardedGenerator
+│           └── sharded_lookup.py         # ShardedLookupGenerator
+├── java/e-commerce-simple-api/           # Spring Boot REST API
+│   └── src/main/java/org/learn/
+│       ├── configuration/                # DataSource configs per profile
+│       ├── repository/                   # single/, sharded/, lookup/
+│       ├── service/                      # Analytics, Order, User, Product
+│       └── controller/
+├── docs/
+│   └── VERIFICATION_FINDINGS.md         # Post-refactor end-to-end test results
+└── cleanup.sh                            # Stop containers and remove volumes
 ```
 
-## 🔍 Troubleshooting
+## Troubleshooting
 
-### Common Issues
-
-#### Database Connection Issues
 ```bash
-# Check if containers are running
+# Check running containers
 docker ps
 
 # Check container logs
 docker logs shard-1
 
-# Restart specific container
-docker-compose -f 01-manual-sharding/docker-compose.yaml restart shard-1
-```
+# Enable debug logging on seed script
+python db_setup.py --mode sharded --users 1000 --log-level DEBUG
 
-#### Data Generation Issues
-```bash
-# Enable debug mode
-python db_setup.py --mode sharded --users 1000 --debug
-
-# Check database connectivity
-python -c "import psycopg; conn = psycopg.connect('host=localhost port=5433 user=postgres dbname=mydb')"
-```
-
-#### Java Application Issues
-```bash
-# Check active profile
-mvn spring-boot:run -Dspring-boot.run.profiles=sharded -Dlogging.level.org.learn=DEBUG
-
-# Verify data source beans
-# Look for auto-configuration conflicts in logs
-```
-
-### Clean Environment
-```bash
-# Complete cleanup
+# Full cleanup
 ./cleanup.sh
-
-# Remove all containers and volumes
-docker system prune -a --volumes
 ```
-
-### Performance Issues
-- **Docker Resources**: Ensure adequate CPU/memory allocation
-- **Batch Size Tuning**: Adjust batch sizes in constants.py
-- **Connection Pooling**: Monitor connection pool settings
-- **Query Optimization**: Use EXPLAIN ANALYZE on slow queries
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## 📄 License
-
-This project is for educational purposes demonstrating database sharding concepts.
-
----
-
-**Note**: This project is optimized for development and learning environments. Production deployments would require additional considerations for security, monitoring, backup strategies, and high availability configurations.

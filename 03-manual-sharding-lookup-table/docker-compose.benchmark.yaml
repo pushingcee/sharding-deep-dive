@@ -1,0 +1,127 @@
+version: '3.9'
+
+# Benchmark configuration for lookup table sharding (lookup DB + 4 shards)
+# Uses constrained resources to amplify performance differences
+# Total resources: ~1.2 CPU, 640MB RAM (lookup overhead + shards)
+# Lookup DB: 0.2 CPU, 128MB RAM (routing table queries)
+# Each shard: 0.25 CPU, 128MB RAM
+#
+# Usage:
+# 1. First, generate data using the main docker-compose.yaml
+# 2. Stop containers: docker-compose down
+# 3. Start benchmark: docker-compose -f docker-compose.benchmark.yaml up -d
+#
+# Key insight: The lookup table adds routing overhead compared to hash-based
+# sharding, but provides flexibility for data migration and rebalancing.
+
+x-shard-benchmark: &shard-benchmark
+  image: postgres:16
+  shm_size: 32m
+  environment:
+    POSTGRES_DB: mydb
+    POSTGRES_USER: postgres
+    POSTGRES_HOST_AUTH_METHOD: trust
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U postgres -d mydb"]
+    interval: 5s
+    timeout: 5s
+    retries: 10
+  deploy:
+    resources:
+      limits:
+        cpus: '0.25'
+        memory: 128M
+      reservations:
+        cpus: '0.125'
+        memory: 64M
+  command: >
+    postgres
+    -c shared_buffers=32MB
+    -c effective_cache_size=64MB
+    -c work_mem=2MB
+    -c maintenance_work_mem=16MB
+    -c max_connections=20
+    -c random_page_cost=4.0
+
+services:
+  lookup-table:
+    image: postgres:16
+    container_name: lookup-table
+    shm_size: 32m
+    environment:
+      POSTGRES_DB: mydb
+      POSTGRES_USER: postgres
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5432:5432"
+    volumes:
+      - lookup_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d mydb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          cpus: '0.2'
+          memory: 128M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    command: >
+      postgres
+      -c shared_buffers=32MB
+      -c effective_cache_size=64MB
+      -c work_mem=2MB
+      -c maintenance_work_mem=16MB
+      -c max_connections=30
+
+  shard-1:
+    <<: *shard-benchmark
+    container_name: shard-1
+    ports:
+      - "5433:5432"
+    volumes:
+      - shard_1_data:/var/lib/postgresql/data
+
+  shard-2:
+    <<: *shard-benchmark
+    container_name: shard-2
+    ports:
+      - "5434:5432"
+    volumes:
+      - shard_2_data:/var/lib/postgresql/data
+
+  shard-3:
+    <<: *shard-benchmark
+    container_name: shard-3
+    ports:
+      - "5435:5432"
+    volumes:
+      - shard_3_data:/var/lib/postgresql/data
+
+  shard-4:
+    <<: *shard-benchmark
+    container_name: shard-4
+    ports:
+      - "5436:5432"
+    volumes:
+      - shard_4_data:/var/lib/postgresql/data
+
+volumes:
+  lookup_data:
+    external: true
+    name: 03-manual-sharding-lookup-table_lookup_data
+  shard_1_data:
+    external: true
+    name: 03-manual-sharding-lookup-table_shard_1_data
+  shard_2_data:
+    external: true
+    name: 03-manual-sharding-lookup-table_shard_2_data
+  shard_3_data:
+    external: true
+    name: 03-manual-sharding-lookup-table_shard_3_data
+  shard_4_data:
+    external: true
+    name: 03-manual-sharding-lookup-table_shard_4_data

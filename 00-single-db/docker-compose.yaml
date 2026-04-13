@@ -6,7 +6,8 @@ volumes:
 services:
   single_instance:
     image: postgres:16
-    container_name: single_instance 
+    container_name: single_instance
+    shm_size: 1g
     environment:
       POSTGRES_USER: postgres
       POSTGRES_DB: mydb

@@ -1,4 +1,9 @@
 # requirements.txt
+
+# Data generation
 psycopg[binary]
 psycopg-pool
 Faker
+
+# Load testing / benchmarking
+locust
