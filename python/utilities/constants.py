@@ -1,4 +1,9 @@
+from pathlib import Path
+
 from utilities.config import DbConfig
+
+# CSV Data Directory (project root /data)
+DATA_DIR: Path = Path(__file__).parent.parent.parent / "data"
 
 # Database Configuration
 DEFAULT_NUM_SHARDS = 4
@@ -49,3 +54,7 @@ DEFAULT_USERS_COUNT = 1000
 DEFAULT_PRODUCTS_COUNT = 500
 DEFAULT_ORDERS_PER_USER = 5
 DEFAULT_ITEMS_PER_ORDER = 3
+
+# CSV generation defaults
+DEFAULT_CSV_USERS_COUNT = 1_000_000
+CSV_LOG_INTERVAL = 50_000
