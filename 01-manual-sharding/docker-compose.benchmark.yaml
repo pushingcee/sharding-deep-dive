@@ -1,21 +1,12 @@
-version: '3.9'
-
-# Benchmark configuration for manual sharding (4 shards)
-# Uses constrained resources to amplify performance differences
-# Total resources: 1.0 CPU, 512MB RAM (same as single DB benchmark)
-# Each shard: 0.25 CPU, 128MB RAM
-#
-# Usage:
-# 1. First, generate data using the main docker-compose.yaml
-# 2. Stop containers: docker-compose down
-# 3. Start benchmark: docker-compose -f docker-compose.benchmark.yaml up -d
-#
-# Key insight: With the same total resources as single DB, sharding enables
-# parallel query execution across shards, demonstrating scalability benefits.
+# Benchmark configuration for manual sharding (4 shards).
+# Per-shard constraints sourced from benchmark-controls.env (SHARDED_DB_*).
+# Cluster total = 4 * SHARDED_DB_* (apples-to-apples with single-DB when SHARDED = 0.25 * SINGLE).
+# Invoke with:
+#   docker compose --env-file ../benchmark-controls.env -f docker-compose.benchmark.yaml up -d
 
 x-shard-benchmark: &shard-benchmark
   image: postgres:16
-  shm_size: 32m
+  shm_size: ${SHARDED_DB_SHM_SIZE}
   environment:
     POSTGRES_DB: mydb
     POSTGRES_USER: postgres
@@ -28,18 +19,17 @@ x-shard-benchmark: &shard-benchmark
   deploy:
     resources:
       limits:
-        cpus: '0.25'
-        memory: 128M
+        cpus: '${SHARDED_DB_CPUS_LIMIT}'
+        memory: ${SHARDED_DB_MEMORY_LIMIT}
       reservations:
-        cpus: '0.125'
-        memory: 64M
+        cpus: '${SHARDED_DB_CPUS_RESERVATION}'
+        memory: ${SHARDED_DB_MEMORY_RESERVATION}
   command: >
     postgres
-    -c shared_buffers=32MB
-    -c effective_cache_size=64MB
-    -c work_mem=2MB
-    -c maintenance_work_mem=16MB
-    -c max_connections=20
+    -c shared_buffers=${SHARDED_DB_SHARED_BUFFERS}
+    -c work_mem=${SHARDED_DB_WORK_MEM}
+    -c maintenance_work_mem=${SHARDED_DB_MAINTENANCE_WORK_MEM}
+    -c max_connections=${SHARDED_DB_MAX_CONNECTIONS}
     -c random_page_cost=4.0
 
 services:

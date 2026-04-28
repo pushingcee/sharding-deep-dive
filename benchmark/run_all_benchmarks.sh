@@ -35,7 +35,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 JAVA_DIR="$PROJECT_ROOT/java/e-commerce-simple-api"
 PYTHON_DIR="$PROJECT_ROOT/python"
+BENCH_VENV="$SCRIPT_DIR/.venv"
 BENCHMARK_DIR="$SCRIPT_DIR"
+ENV_FILE="${BENCHMARK_ENV_FILE:-$PROJECT_ROOT/benchmark-controls.env}"
 
 # Default data generation parameters
 USERS=250000
@@ -44,7 +46,7 @@ ORDERS_PER_USER=5
 ITEMS_PER_ORDER=5
 
 # Default benchmark parameters
-BENCH_USERS=150
+BENCH_USERS=80
 BENCH_SPAWN=15
 BENCH_DURATION="180s"
 
@@ -153,7 +155,7 @@ check_prerequisites() {
     fi
     log_info "Docker Compose: OK"
 
-    # Check Python venv
+    # Check Python venv (db_setup)
     if [ ! -d "$PYTHON_DIR/.venv" ]; then
         log_error "Python virtual environment not found at $PYTHON_DIR/.venv"
         log_info "Create it with: cd $PYTHON_DIR && python -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt"
@@ -161,9 +163,18 @@ check_prerequisites() {
     fi
     log_info "Python venv: OK"
 
+    # Check benchmark venv (locust)
+    if [ ! -d "$BENCH_VENV" ]; then
+        log_error "Benchmark virtual environment not found at $BENCH_VENV"
+        log_info "Create it with: cd $SCRIPT_DIR && python -m venv .venv && .venv/bin/pip install -r requirements.txt"
+        exit 1
+    fi
+    log_info "Benchmark venv: OK"
+
     # Check Locust
-    if ! "$PYTHON_DIR/.venv/bin/locust" --version &> /dev/null; then
-        log_error "Locust not installed in Python venv"
+    if ! "$BENCH_VENV/bin/locust" --version &> /dev/null; then
+        log_error "Locust not installed in benchmark venv ($BENCH_VENV)"
+        log_info "Install with: $BENCH_VENV/bin/pip install -r $SCRIPT_DIR/requirements.txt"
         exit 1
     fi
     log_info "Locust: OK"
@@ -189,9 +200,9 @@ check_prerequisites() {
 
 docker_compose_cmd() {
     if docker compose version &> /dev/null 2>&1; then
-        docker compose "$@"
+        docker compose --env-file "$ENV_FILE" "$@"
     else
-        docker-compose "$@"
+        docker-compose --env-file "$ENV_FILE" "$@"
     fi
 }
 
@@ -353,9 +364,9 @@ run_strategy_benchmark() {
     # Step 6: Run benchmark
     log_info "Step 6/6: Running Locust benchmark..."
     cd "$BENCHMARK_DIR"
-    source "$PYTHON_DIR/.venv/bin/activate"
+    source "$BENCH_VENV/bin/activate"
 
-    "$PYTHON_DIR/.venv/bin/locust" \
+    "$BENCH_VENV/bin/locust" \
         -f locustfile.py \
         --host="http://localhost:8080" \
         --users "$BENCH_USERS" \

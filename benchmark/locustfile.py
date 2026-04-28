@@ -1,175 +1,227 @@
 """
 Locust load testing configuration for database sharding benchmark.
 
-This file defines load test scenarios to compare performance across:
+Compares performance across:
 - Single database
 - Manual sharding (hash-based)
 - Citus sharding
 - Lookup table sharding
 
-Usage:
-    # Start the web UI (recommended for interactive testing)
-    locust -f locustfile.py --host=http://localhost:8080
+Determinism
+-----------
+Every run against every DB must generate the *same* sequence of requests
+and parameters, so differences in measured latency come from the DB only.
+To achieve that:
 
-    # Headless mode with specific parameters
-    locust -f locustfile.py --host=http://localhost:8080 \
+  * Global ``LOAD_SEED`` seeds the prefetch-pool shuffle.
+  * Each VU gets its own ``random.Random`` seeded from ``LOAD_SEED + vu_id``,
+    so the stream of user/order IDs and date ranges it draws is reproducible.
+  * ``wait_time`` uses the same per-VU RNG, so pacing is also reproducible.
+  * Analytics date ranges are computed relative to ``ANCHOR_DATE`` (not
+    ``date.today()``), so running the benchmark on different days still
+    produces identical params.
+
+Usage
+-----
+    locust -f locustfile.py --host=http://localhost:8080 \\
            --users 50 --spawn-rate 10 --run-time 60s --headless
 
-    # Run specific user class only
-    locust -f locustfile.py --host=http://localhost:8080 -T HeavyAnalyticsUser
-
-Key Metrics to Compare:
-    - Response time (p50, p95, p99)
-    - Requests per second (RPS)
-    - Failure rate
-    - The /analytics endpoint is the best for comparing sharding benefits
-      as it executes complex cross-table queries
+Override the seed or anchor via env:
+    LOAD_SEED=42 ANCHOR_DATE=2026-01-01 locust ...
 """
 
+import csv
+import os
 import random
 import logging
-from locust import HttpUser, task, between, events
+import itertools
+import datetime as dt
+from pathlib import Path
+from typing import Iterator, Optional
+from locust import HttpUser, task, events
 from locust.runners import MasterRunner
 
-# Sample UUIDs - these will be populated from the database
-# In a real scenario, you'd fetch these from the API or database first
-SAMPLE_USER_IDS = []
-SAMPLE_PRODUCT_IDS = []
-SAMPLE_ORDER_IDS = []
+# Determinism knobs -----------------------------------------------------------
+LOAD_SEED = int(os.environ.get("LOAD_SEED", "1337"))
+# Fixed anchor so date ranges don't drift between runs on different days.
+ANCHOR_DATE = dt.date.fromisoformat(os.environ.get("ANCHOR_DATE", "2026-01-01"))
+
+# Pool sizes: what fraction of seeded rows to sample for workload rotation.
+# Wider pool => harder to cache the working set => more prod-like.
+# Percentage-based so the pool scales with DB size — a 10k-user seed still
+# gets a usable pool without a fixed 50k floor producing "not enough rows".
+USER_POOL_PCT = float(os.environ.get("USER_POOL_PCT", "0.10"))
+ORDER_POOL_PCT = float(os.environ.get("ORDER_POOL_PCT", "0.10"))
+
+# CSV data source for ID prefetch. Same files used by the seeder.
+DATA_DIR = Path(os.environ.get("BENCH_DATA_DIR", Path(__file__).resolve().parent.parent / "data"))
+
+# Populated once at test_start from the API
+SAMPLE_USER_IDS: list[str] = []
+SAMPLE_ORDER_IDS: list[str] = []
+
+# Global VU-id allocator — each HttpUser instance claims a unique id on start,
+# which seeds its local RNG. Using a counter (rather than id(self)) keeps the
+# seed sequence identical across runs.
+_vu_counter = itertools.count()
 
 logger = logging.getLogger(__name__)
 
 
-@events.init.add_listener
-def on_locust_init(environment, **kwargs):
-    """Initialize test data when Locust starts."""
+def _random_analytics_window(rng: random.Random) -> tuple[dt.date, dt.date]:
+    """Pick a deterministic 30-day window within the 2 years before ANCHOR_DATE.
+
+    Window width is fixed (30 days) so each call does comparable work.
+    Start date is drawn uniformly, so different calls hit different heap
+    slices and defeat any per-query result cache.
+    """
+    max_offset_days = 365 * 2 - 30
+    offset = rng.randint(0, max_offset_days)
+    window_end = ANCHOR_DATE - dt.timedelta(days=offset)
+    window_start = window_end - dt.timedelta(days=30)
+    return window_start, window_end
+
+
+def _bernoulli_sample_first_column(path: Path, pct: float, rng: random.Random) -> list[str]:
+    """Keep each row from the first column of a CSV with probability ``pct``.
+
+    One streaming pass — no line count needed up front. Pool size scales with
+    input size, so a smaller seeded DB still yields a proportional pool.
+    """
+    if not 0.0 < pct <= 1.0:
+        raise ValueError(f"sample pct must be in (0, 1], got {pct}")
+    sample: list[str] = []
+    with path.open("r", newline="") as f:
+        reader = csv.reader(f)
+        next(reader, None)  # skip header
+        for row in reader:
+            if not row:
+                continue
+            if rng.random() < pct:
+                sample.append(row[0])
+    return sample
+
+
+@events.test_start.add_listener
+def on_test_start(environment, **kwargs):
+    """Sample a wide pool of user/order IDs from the seed CSVs before VUs start.
+
+    Reading from disk (not the API) keeps the warm-up independent of backend
+    performance, so a slow /orders/all-page on the sharded backend doesn't
+    starve the measured workload.
+    """
     if isinstance(environment.runner, MasterRunner):
-        logger.info("Running on master node, skipping data fetch")
         return
 
-    logger.info("Locust initialized - fetching sample IDs from API...")
-    # Note: Sample IDs should be pre-populated or fetched at test start
-    # For now, tests will use random UUIDs which may return 404s
-    # This is intentional to also test error handling performance
+    users_csv = DATA_DIR / "users.csv"
+    orders_csv = DATA_DIR / "orders.csv"
+    if not users_csv.exists() or not orders_csv.exists():
+        raise RuntimeError(
+            f"Seed CSVs not found under {DATA_DIR}. "
+            f"Set BENCH_DATA_DIR or regenerate with db_setup.py."
+        )
+
+    logger.info(
+        f"Sampling ID pools from CSV (users_pct={USER_POOL_PCT:.2%}, "
+        f"orders_pct={ORDER_POOL_PCT:.2%}, seed={LOAD_SEED}, anchor={ANCHOR_DATE})..."
+    )
+    rng = random.Random(LOAD_SEED)
+    users_sampled = _bernoulli_sample_first_column(users_csv, USER_POOL_PCT, rng)
+    orders_sampled = _bernoulli_sample_first_column(orders_csv, ORDER_POOL_PCT, rng)
+    if not users_sampled or not orders_sampled:
+        raise RuntimeError(
+            f"Sampled 0 rows — check CSVs at {DATA_DIR} and *_POOL_PCT settings."
+        )
+
+    # Shuffle with the same RNG so rotation order is deterministic across runs.
+    rng.shuffle(users_sampled)
+    rng.shuffle(orders_sampled)
+    SAMPLE_USER_IDS[:] = users_sampled
+    SAMPLE_ORDER_IDS[:] = orders_sampled
+
+    # Reset the VU counter so a second test in the same process re-seeds VUs identically.
+    global _vu_counter
+    _vu_counter = itertools.count()
+
+    logger.info(
+        f"Sampling complete: {len(SAMPLE_USER_IDS)} users, "
+        f"{len(SAMPLE_ORDER_IDS)} orders"
+    )
 
 
-class QuickReadUser(HttpUser):
+class _SeededUser(HttpUser):
+    """Base class that gives each VU its own deterministic RNG.
+
+    ``wait_time`` is overridden to draw from the local RNG so pacing is
+    reproducible across runs.
     """
-    Simulates users performing quick read operations.
 
-    This represents typical API usage patterns:
-    - Fetching user profiles
-    - Looking up products
-    - Checking order status
+    abstract = True
+    wait_low: float = 0.5
+    wait_high: float = 2.0
 
-    Use this to measure baseline read performance.
-    """
+    def on_start(self) -> None:
+        self.vu_id: int = next(_vu_counter)
+        self.rng: random.Random = random.Random(LOAD_SEED + self.vu_id)
 
-    weight = 3  # 3x more likely to spawn than other user types
-    wait_time = between(0.5, 2)  # Wait 0.5-2 seconds between requests
+    def wait_time(self) -> float:
+        return self.rng.uniform(self.wait_low, self.wait_high)
 
-    def on_start(self):
-        """Called when a simulated user starts."""
-        # Try to fetch some real IDs from the API
-        self._fetch_sample_ids()
 
-    def _fetch_sample_ids(self):
-        """Attempt to fetch sample IDs from paginated endpoints."""
-        global SAMPLE_USER_IDS, SAMPLE_ORDER_IDS
+class QuickReadUser(_SeededUser):
+    """Quick read operations: user/order point lookups, paginated scans."""
 
-        try:
-            # Fetch some orders to get user_ids and order_ids
-            response = self.client.get("/orders/all-page?page=0&size=100",
-                                       name="/orders/all-page [init]")
-            if response.status_code == 200:
-                data = response.json()
-                content = data.get("content", [])
-                for order in content[:50]:
-                    # Handle snake_case field names from Java entities
-                    order_id = order.get("order_id")
-                    if order_id and order_id not in SAMPLE_ORDER_IDS:
-                        SAMPLE_ORDER_IDS.append(order_id)
-                    # User is nested object in Order entity
-                    user = order.get("user", {})
-                    user_id = user.get("user_id") if user else None
-                    if user_id and user_id not in SAMPLE_USER_IDS:
-                        SAMPLE_USER_IDS.append(user_id)
-                logger.info(f"Fetched {len(SAMPLE_USER_IDS)} user IDs and {len(SAMPLE_ORDER_IDS)} order IDs")
-        except Exception as e:
-            logger.warning(f"Could not fetch sample IDs: {e}")
+    weight = 3
+    wait_low, wait_high = 0.5, 2.0
 
     @task(5)
-    def get_user_by_id(self):
-        """Fetch a user by UUID - tests single-row lookup performance."""
-        if SAMPLE_USER_IDS:
-            user_id = random.choice(SAMPLE_USER_IDS)
-            self.client.get(f"/users/{user_id}", name="/users/{uuid}")
-        else:
-            # Use a random UUID if we don't have samples
-            self.client.get(f"/users/00000000-0000-0000-0000-000000000001",
-                           name="/users/{uuid}")
+    def get_user_by_id(self) -> None:
+        user_id = self.rng.choice(SAMPLE_USER_IDS)
+        self.client.get(f"/users/{user_id}", name="/users/{uuid}")
 
     @task(3)
-    def get_orders_by_user(self):
-        """Fetch orders for a user - tests co-located data retrieval."""
-        if SAMPLE_USER_IDS:
-            user_id = random.choice(SAMPLE_USER_IDS)
-            self.client.get(f"/orders/user/{user_id}", name="/orders/user/{uuid}")
-        else:
-            self.client.get(f"/orders/user/00000000-0000-0000-0000-000000000001",
-                           name="/orders/user/{uuid}")
+    def get_orders_by_user(self) -> None:
+        user_id = self.rng.choice(SAMPLE_USER_IDS)
+        self.client.get(f"/orders/user/{user_id}", name="/orders/user/{uuid}")
 
     @task(2)
-    def get_order_by_id(self):
-        """Fetch a specific order - tests single-row lookup."""
-        if SAMPLE_ORDER_IDS:
-            order_id = random.choice(SAMPLE_ORDER_IDS)
-            self.client.get(f"/orders/{order_id}", name="/orders/{uuid}")
-        else:
-            self.client.get(f"/orders/00000000-0000-0000-0000-000000000001",
-                           name="/orders/{uuid}")
+    def get_order_by_id(self) -> None:
+        order_id = self.rng.choice(SAMPLE_ORDER_IDS)
+        self.client.get(f"/orders/{order_id}", name="/orders/{uuid}")
 
     @task(1)
-    def get_orders_paginated(self):
-        """Fetch paginated orders - tests scan performance."""
-        page = random.randint(0, 10)
-        size = random.choice([10, 20, 50])
-        self.client.get(f"/orders/all-page?page={page}&size={size}",
-                       name="/orders/all-page")
+    def get_orders_paginated(self) -> None:
+        page = self.rng.randint(0, 10)
+        size = self.rng.choice([10, 20, 50])
+        self.client.get(
+            f"/orders/all-page?page={page}&size={size}",
+            name="/orders/all-page",
+        )
 
 
-class HeavyAnalyticsUser(HttpUser):
+class HeavyAnalyticsUser(_SeededUser):
     """
-    Simulates users running heavy analytics queries.
+    THIS IS THE KEY BENCHMARK.
 
-    THIS IS THE KEY BENCHMARK for comparing sharding strategies.
-
-    The /analytics endpoint runs a complex query with:
-    - Multiple table JOINs (users, orders, products, order_items)
-    - Aggregations (COUNT, SUM, AVG, MAX)
-    - CTEs (Common Table Expressions)
-    - Date range filtering
-
-    In sharded setups, this query runs in parallel across shards,
-    demonstrating the scalability benefits of horizontal partitioning.
+    Each call picks a random 30-day window (deterministically, per VU) and
+    passes it as ?from=&to=. That defeats result caching and makes each
+    call exercise a different slice of the heap, so the scan is cache-
+    unfriendly in the prod-like way.
     """
 
-    weight = 1  # Less frequent than quick reads
-    wait_time = between(2, 5)  # Longer wait between heavy queries
+    weight = 1
+    wait_low, wait_high = 2.0, 5.0
 
     @task
-    def run_analytics(self):
-        """
-        Execute the heavy cross-shard analytics query.
-
-        Monitor the X-Execution-Time-Ms header for server-side timing.
-        Compare this across different sharding strategies to see benefits.
-        """
-        with self.client.get("/analytics",
-                            name="/analytics [HEAVY]",
-                            catch_response=True) as response:
+    def run_analytics(self) -> None:
+        window_start, window_end = _random_analytics_window(self.rng)
+        url = f"/analytics?from={window_start.isoformat()}&to={window_end.isoformat()}"
+        with self.client.get(
+            url,
+            name="/analytics [HEAVY]",
+            catch_response=True,
+        ) as response:
             if response.status_code == 200:
-                # Log server-side execution time if available
                 exec_time = response.headers.get("X-Execution-Time-Ms")
                 if exec_time:
                     logger.debug(f"Analytics query server time: {exec_time}ms")
@@ -178,42 +230,32 @@ class HeavyAnalyticsUser(HttpUser):
                 response.failure(f"Analytics failed: {response.status_code}")
 
 
-class MixedWorkloadUser(HttpUser):
-    """
-    Simulates realistic mixed workload with reads and analytics.
-
-    This represents a typical production scenario where most requests
-    are simple reads, but occasional analytics queries create load spikes.
-    """
+class MixedWorkloadUser(_SeededUser):
+    """Realistic mixed workload — mostly reads, occasional analytics."""
 
     weight = 2
-    wait_time = between(1, 3)
+    wait_low, wait_high = 1.0, 3.0
 
     @task(10)
-    def quick_user_lookup(self):
-        """High-frequency user lookups."""
-        if SAMPLE_USER_IDS:
-            user_id = random.choice(SAMPLE_USER_IDS)
-            self.client.get(f"/users/{user_id}", name="/users/{uuid}")
+    def quick_user_lookup(self) -> None:
+        user_id = self.rng.choice(SAMPLE_USER_IDS)
+        self.client.get(f"/users/{user_id}", name="/users/{uuid}")
 
     @task(5)
-    def quick_order_lookup(self):
-        """Medium-frequency order lookups."""
-        if SAMPLE_ORDER_IDS:
-            order_id = random.choice(SAMPLE_ORDER_IDS)
-            self.client.get(f"/orders/{order_id}", name="/orders/{uuid}")
+    def quick_order_lookup(self) -> None:
+        order_id = self.rng.choice(SAMPLE_ORDER_IDS)
+        self.client.get(f"/orders/{order_id}", name="/orders/{uuid}")
 
     @task(1)
-    def occasional_analytics(self):
-        """Low-frequency but heavy analytics."""
-        self.client.get("/analytics", name="/analytics [HEAVY]")
+    def occasional_analytics(self) -> None:
+        window_start, window_end = _random_analytics_window(self.rng)
+        url = f"/analytics?from={window_start.isoformat()}&to={window_end.isoformat()}"
+        self.client.get(url, name="/analytics [HEAVY]")
 
 
-# Custom event handlers for better reporting
 @events.request.add_listener
 def on_request(request_type, name, response_time, response_length,
                response, context, exception, **kwargs):
-    """Log details for analytics requests to help with comparison."""
     if "[HEAVY]" in name and response is not None:
         exec_time = response.headers.get("X-Execution-Time-Ms", "N/A")
         logger.info(f"Analytics: client={response_time:.0f}ms, server={exec_time}ms")
@@ -221,13 +263,13 @@ def on_request(request_type, name, response_time, response_length,
 
 @events.test_stop.add_listener
 def on_test_stop(environment, **kwargs):
-    """Print summary when test stops."""
     logger.info("=" * 60)
     logger.info("BENCHMARK COMPLETE")
     logger.info("=" * 60)
+    logger.info(f"Seed: {LOAD_SEED}  Anchor: {ANCHOR_DATE}")
     logger.info("Compare these results across different database configurations:")
-    logger.info("  1. Single DB:     docker-compose -f 00-single-db/docker-compose.benchmark.yaml")
-    logger.info("  2. Manual Shard:  docker-compose -f 01-manual-sharding/docker-compose.benchmark.yaml")
-    logger.info("  3. Citus:         docker-compose -f 02-citus-sharding/docker-compose.benchmark.yaml")
-    logger.info("  4. Lookup Table:  docker-compose -f 03-manual-sharding-lookup-table/docker-compose.benchmark.yaml")
+    logger.info("  1. Single DB:     00-single-db/docker-compose.benchmark.yaml")
+    logger.info("  2. Manual Shard:  01-manual-sharding/docker-compose.benchmark.yaml")
+    logger.info("  3. Citus:         02-citus-sharding/docker-compose.benchmark.yaml")
+    logger.info("  4. Lookup Table:  03-manual-sharding-lookup-table/docker-compose.benchmark.yaml")
     logger.info("=" * 60)

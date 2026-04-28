@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PostgreSQL Sharding Benchmark</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#06080e;--bg2:#0b0e1a;--bg3:#10142a;--bg4:#161b33;
+  --border:#1a1f38;--border2:#252c50;
+  --text:#d0d8ee;--text2:#8b93b8;--text3:#f2f4fb;
+  --single:#8b5cf6;--sharded:#f59e0b;--citus:#06b6d4;--lookup:#ec4899;
+  --ok:#10b981;--fail:#ef4444;--warn:#eab308;
+  --active:#8b5cf6;--active-g:rgba(139,92,246,.12);
+  --ff:'Chakra Petch',sans-serif;--fm:'IBM Plex Mono',monospace;
+}
+html{font-size:16px;scroll-behavior:smooth}
+body{background:var(--bg);color:var(--text);font-family:var(--fm);min-height:100vh;overflow-x:hidden}
+
+::selection{background:rgba(139,92,246,.3);color:#fff}
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
+
+/* ═══ HEADER ═══ */
+.hdr{padding:28px 40px 20px;border-bottom:1px solid var(--border);position:relative;z-index:10;display:flex;justify-content:space-between;align-items:flex-end;gap:24px;flex-wrap:wrap}
+.hdr::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--active) 30%,var(--active) 70%,transparent);opacity:.25;transition:background .3s}
+.hdr h1{font-family:var(--ff);font-size:1.75rem;font-weight:700;letter-spacing:.1em;color:var(--text3)}
+.hdr h1 b{color:var(--active);transition:color .3s;font-weight:700}
+.hdr-tag{font-size:.85rem;letter-spacing:.14em;color:var(--text2);margin-top:6px;text-transform:uppercase}
+.hdr-meta{display:flex;gap:28px;flex-wrap:wrap}
+.hdr-m{text-align:right}
+.hdr-m-l{font-size:.72rem;letter-spacing:.14em;color:var(--text2);text-transform:uppercase;margin-bottom:2px}
+.hdr-m-v{font-size:.95rem;color:var(--text)}
+
+/* ═══ TABS ═══ */
+.tabs{display:flex;gap:0;padding:0 40px;border-bottom:1px solid var(--border);position:relative;z-index:10;overflow-x:auto}
+.tab{padding:16px 28px;background:none;border:none;cursor:pointer;font-family:var(--ff);font-size:.82rem;letter-spacing:.1em;text-transform:uppercase;color:var(--text2);transition:color .2s;display:flex;align-items:center;gap:8px;white-space:nowrap;position:relative}
+.tab::after{content:'';position:absolute;bottom:-1px;left:0;right:0;height:2px;background:transparent;transition:background .2s}
+.tab:hover{color:var(--text)}
+.tab.on{color:var(--text3)}
+.tab[data-s="single"].on{color:var(--single)}.tab[data-s="single"].on::after{background:var(--single)}
+.tab[data-s="sharded"].on{color:var(--sharded)}.tab[data-s="sharded"].on::after{background:var(--sharded)}
+.tab[data-s="citus"].on{color:var(--citus)}.tab[data-s="citus"].on::after{background:var(--citus)}
+.tab[data-s="lookup"].on{color:var(--lookup)}.tab[data-s="lookup"].on::after{background:var(--lookup)}
+.tab[data-s="compare"].on{color:var(--text3)}.tab[data-s="compare"].on::after{background:var(--text2)}
+.tdot{width:6px;height:6px;border-radius:50%;flex-shrink:0;opacity:.7}
+
+/* ═══ MAIN ═══ */
+.main{padding:28px 40px 60px;max-width:1400px;margin:0 auto;position:relative;z-index:10}
+
+/* ═══ STRATEGY BAR ═══ */
+.sbar{background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:16px 24px;margin-bottom:24px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px}
+.sbar-id{display:flex;align-items:center;gap:12px}
+.sbar-line{width:3px;height:32px;border-radius:2px;background:var(--active);transition:background .3s}
+.sbar-name{font-family:var(--ff);font-size:1.15rem;font-weight:600;color:var(--text3);letter-spacing:.04em}
+.sbar-sub{font-size:.85rem;color:var(--text2);margin-top:3px}
+.sbar-stats{display:flex;gap:32px;flex-wrap:wrap}
+.ss{text-align:center}
+.ss-l{font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;color:var(--text2);margin-bottom:4px}
+.ss-v{font-family:var(--ff);font-size:1.4rem;font-weight:600;color:var(--text3)}
+.ss-v.bad{color:var(--fail)}.ss-v.mid{color:var(--warn)}.ss-v.good{color:var(--ok)}
+
+/* ═══ SECTION TITLE ═══ */
+.stitle{font-family:var(--ff);font-size:.82rem;letter-spacing:.15em;text-transform:uppercase;color:var(--text2);margin-bottom:16px;display:flex;align-items:center;gap:12px}
+.stitle::after{content:'';flex:1;height:1px;background:var(--border)}
+
+/* ═══ ENDPOINT TABLE ═══ */
+.etbl{width:100%;border-collapse:collapse}
+.etbl th{font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--text2);text-align:left;padding:10px 12px;border-bottom:1px solid var(--border);font-weight:400;white-space:nowrap}
+.etbl th:nth-child(5),.etbl th:nth-child(6){text-align:right}
+.erow{cursor:pointer;transition:background .15s}
+.erow:hover{background:rgba(255,255,255,.02)}
+.erow td{padding:14px 12px;border-bottom:1px solid rgba(26,31,56,.6);vertical-align:middle}
+.ep-name{font-size:.95rem;color:var(--text3);font-weight:500}
+.ep-path{font-size:.78rem;color:var(--text2);margin-top:2px}
+
+/* fail badges */
+.fbadge{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:3px;font-size:.88rem;font-weight:500;white-space:nowrap}
+.fbadge.crit{background:rgba(239,68,68,.12);color:#f87171}
+.fbadge.high{background:rgba(234,179,8,.12);color:#facc15}
+.fbadge.med{background:rgba(251,191,36,.1);color:#fbbf24}
+.fbadge.low{background:rgba(16,185,129,.12);color:#34d399}
+.fbadge.ok{background:rgba(16,185,129,.15);color:#10b981}
+
+/* latency bar */
+.lbar{min-width:120px;max-width:200px}
+.lbar-t{height:5px;background:var(--border);border-radius:3px;margin-bottom:4px;overflow:hidden;position:relative}
+.lbar-f{position:absolute;top:0;left:0;height:100%;border-radius:3px;background:var(--active);transition:width .6s cubic-bezier(.4,0,.2,1),background .3s}
+.lbar-v{font-size:.88rem;color:var(--text)}
+
+/* percentile cols */
+.pcols{display:flex;gap:18px}
+.pc{text-align:center;white-space:nowrap}
+.pc-l{font-size:.7rem;color:var(--text2);letter-spacing:.06em;display:block;margin-bottom:2px}
+.pc-v{font-size:.88rem;color:var(--text)}
+.rps-v{font-size:.95rem;color:var(--text);text-align:right}
+
+/* expanded row */
+.eexp{display:none}
+.eexp.open{display:table-row}
+.eexp-inner{background:var(--bg3);padding:20px 24px;border-bottom:1px solid var(--border)}
+.eexp-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:16px;margin-bottom:16px}
+@media(max-width:800px){.eexp-grid{grid-template-columns:repeat(4,1fr)}}
+.pb{text-align:center}
+.pb-l{font-size:.72rem;letter-spacing:.1em;color:var(--text2);text-transform:uppercase;margin-bottom:6px}
+.pb-v{font-family:var(--ff);font-size:1.1rem;font-weight:600;color:var(--text3)}
+.pb-bar{height:3px;background:var(--border);border-radius:2px;margin-top:6px;overflow:hidden;position:relative}
+.pb-bar-f{position:absolute;top:0;left:0;height:100%;border-radius:2px;background:var(--active);transition:background .3s}
+.eexp-errors{margin-top:12px;padding-top:12px;border-top:1px solid var(--border)}
+.eexp-errors-t{font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--text2);margin-bottom:8px}
+.err-row{display:flex;gap:14px;align-items:baseline;padding:3px 0;font-size:.85rem}
+.err-type{color:var(--fail);font-weight:500;min-width:48px}
+.err-msg{color:var(--text2);word-break:break-all}
+
+/* ═══ INSIGHTS ═══ */
+.insights{margin-top:28px;background:var(--bg2);border:1px solid var(--border);border-left:3px solid var(--active);border-radius:0 4px 4px 0;padding:22px 24px;position:relative;overflow:hidden;transition:border-color .3s}
+.insights::before{content:'';position:absolute;inset:0;background:linear-gradient(135deg,var(--active-g),transparent 60%);pointer-events:none;transition:background .3s}
+.ins-hdr{display:flex;align-items:center;gap:10px;margin-bottom:14px;position:relative}
+.ins-icon{width:32px;height:32px;display:flex;align-items:center;justify-content:center;border-radius:4px;background:var(--active-g);color:var(--active);font-family:var(--ff);font-size:.95rem;font-weight:700;transition:all .3s}
+.ins-title{font-family:var(--ff);font-size:.82rem;letter-spacing:.14em;text-transform:uppercase;color:var(--active);transition:color .3s}
+.ins-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;position:relative}
+@media(max-width:900px){.ins-grid{grid-template-columns:1fr}}
+.ins-label{font-size:.78rem;letter-spacing:.1em;text-transform:uppercase;color:var(--active);margin-bottom:6px;transition:color .3s}
+.ins-label::before{content:'\25b8 ';font-size:.6rem}
+.ins-text{font-size:.95rem;color:var(--text);line-height:1.65}
+.ins-text strong{color:var(--text3);font-weight:600}
+
+/* ═══ COMPARE ═══ */
+.cmp-ctrl{display:flex;gap:6px;margin-bottom:22px;flex-wrap:wrap}
+.mbtn{padding:9px 18px;background:var(--bg2);border:1px solid var(--border);border-radius:3px;font-family:var(--fm);font-size:.85rem;letter-spacing:.06em;text-transform:uppercase;color:var(--text2);cursor:pointer;transition:all .2s}
+.mbtn:hover{border-color:var(--border2);color:var(--text)}
+.mbtn.on{background:rgba(255,255,255,.04);border-color:var(--text2);color:var(--text3)}
+.cmp-legend{display:flex;gap:22px;margin-bottom:18px;flex-wrap:wrap}
+.cmp-leg{display:flex;align-items:center;gap:6px;font-size:.82rem;color:var(--text2)}
+.cmp-dot{width:9px;height:9px;border-radius:50%}
+.cmp-chart{display:grid;gap:0}
+.cmp-hdr{display:grid;grid-template-columns:190px 1fr;gap:16px;padding:8px 0 12px;border-bottom:1px solid var(--border);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--text2)}
+.cmp-row{display:grid;grid-template-columns:190px 1fr;gap:16px;align-items:center;padding:12px 0;border-bottom:1px solid rgba(26,31,56,.4)}
+.cmp-row.agg{margin-top:8px;border-top:1px solid var(--border2);padding-top:16px}
+.cmp-ep{font-size:.9rem;color:var(--text2)}
+.cmp-row.agg .cmp-ep{color:var(--text3);font-weight:500}
+.cmp-bars{display:grid;grid-template-rows:repeat(4,1fr);gap:4px}
+.cmp-br{display:flex;align-items:center;gap:8px;height:20px}
+.cmp-bs{font-size:.7rem;letter-spacing:.05em;text-transform:uppercase;width:62px;text-align:right;flex-shrink:0;color:var(--text2)}
+.cmp-bt{flex:1;height:7px;background:var(--border);border-radius:4px;overflow:hidden;position:relative}
+.cmp-bf{position:absolute;top:0;left:0;height:100%;border-radius:4px;transition:width .7s cubic-bezier(.4,0,.2,1);opacity:.85}
+.cmp-bv{font-size:.82rem;color:var(--text2);width:78px;flex-shrink:0;text-align:right}
+
+/* winner/loser marks in compare */
+.cmp-bv.best{color:var(--ok);font-weight:500}
+.cmp-bv.worst{color:var(--fail);font-weight:500}
+
+/* ═══ ANIMATIONS ═══ */
+@keyframes fi{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+.fi{animation:fi .25s ease both}
+.fi1{animation-delay:40ms}.fi2{animation-delay:80ms}.fi3{animation-delay:120ms}.fi4{animation-delay:160ms}.fi5{animation-delay:200ms}.fi6{animation-delay:240ms}.fi7{animation-delay:280ms}
+
+/* ═══ RESPONSIVE ═══ */
+@media(max-width:1000px){.hdr,.tabs,.main{padding-left:20px;padding-right:20px}.pcols{gap:8px}}
+</style>
+</head>
+<body>
+
+<header class="hdr">
+  <div>
+    <h1>PG SHARDING <b id="hdr-accent">BENCHMARK</b></h1>
+    <div class="hdr-tag">1M users &middot; 5M orders (uniform across strategies) &middot; 40 concurrent &middot; Locust</div>
+  </div>
+  <div class="hdr-meta">
+    <div class="hdr-m"><div class="hdr-m-l">Dataset</div><div class="hdr-m-v">1M users / 5M orders (apples-to-apples)</div></div>
+    <div class="hdr-m"><div class="hdr-m-l">Load</div><div class="hdr-m-v">40 users / 2 per sec ramp / 120s</div></div>
+    <div class="hdr-m"><div class="hdr-m-l">Stack</div><div class="hdr-m-v">Spring Boot + JDK 25 + HikariCP 6.3</div></div>
+    <div class="hdr-m"><div class="hdr-m-l">Run Date</div><div class="hdr-m-v">2026-04-24 13:09–13:19</div></div>
+  </div>
+</header>
+
+<nav class="tabs">
+  <button class="tab on" data-s="single"><span class="tdot" style="background:var(--single)"></span>Single DB</button>
+  <button class="tab" data-s="sharded"><span class="tdot" style="background:var(--sharded)"></span>Manual Sharding</button>
+  <button class="tab" data-s="citus"><span class="tdot" style="background:var(--citus)"></span>Citus Distributed</button>
+  <button class="tab" data-s="lookup"><span class="tdot" style="background:var(--lookup)"></span>Lookup Table</button>
+  <button class="tab" data-s="compare"><span class="tdot" style="background:var(--text2)"></span>Compare All</button>
+</nav>
+
+<main class="main" id="root"></main>
+
+<script>
+const LOG_MAX=Math.log10(40000);
+
+const S={
+single:{
+  id:'single',label:'Single DB',color:'#8b5cf6',glow:'rgba(139,92,246,.12)',
+  date:'2026-04-24 13:09',arch:'Single PostgreSQL instance, 1M users / 5M orders, no distribution',badge:'1 NODE',
+  totals:{req:1218,fail:120,fr:9.85,p50:5300,p95:41000,rps:6.81},
+  endpoints:[
+    {key:'analytics',label:'[HEAVY] Analytics',path:'GET /analytics',req:72,fail:9,fr:12.5,p50:42000,p75:45000,p95:62000,p99:64000,max:64021,rps:0.40,avg:38724,errors:[{n:8,t:'HTTPError: 500 Server Error'},{n:1,t:'CatchResponseError: Analytics failed: 500'}]},
+    {key:'allpage',label:'Orders Paginated',path:'GET /orders/all-page',req:59,fail:28,fr:47.5,p50:36000,p75:42000,p95:45000,p99:47000,max:46782,rps:0.33,avg:30707,errors:[{n:28,t:'HTTPError: 500 Server Error'}]},
+    {key:'ouser',label:'Orders by User',path:'GET /orders/user/{uuid}',req:150,fail:10,fr:6.7,p50:16000,p75:18000,p95:23000,p99:23000,max:23566,rps:0.84,avg:14894,errors:[{n:10,t:'HTTPError: 500 Server Error'}]},
+    {key:'oid',label:'Order by ID',path:'GET /orders/{uuid}',req:308,fail:25,fr:8.1,p50:3300,p75:6700,p95:10000,p99:10000,max:10014,rps:1.72,avg:3900,errors:[{n:25,t:'HTTPError: 500 Server Error'}]},
+    {key:'uid',label:'User by ID',path:'GET /users/{uuid}',req:629,fail:48,fr:7.6,p50:3700,p75:6900,p95:10000,p99:10000,max:10094,rps:3.52,avg:4176,errors:[{n:48,t:'HTTPError: 500 Server Error'}]},
+  ],
+  insights:[
+    {l:'Single Pool Saturated',t:'After the uniform Hikari pool size (40), single feeds <strong>every endpoint from one 40-slot pool</strong>. Heavy queries (/analytics, /all-page) hold connections for 30&ndash;42s; new callers queue. The Spring log shows hundreds of <code>single-pool ... total=40, active=40, idle=0, waiting=N</code> lines &mdash; every endpoint then sees pool wait, not just heavy ones.'},
+    {l:'Point Reads No Longer Fast',t:'<strong>/users 3.7s p50 / /orders 3.3s p50</strong> &mdash; previously 57&ndash;73ms. The 100&times; slowdown is pure pool-acquire wait time; the underlying queries are unchanged. Single&#39;s strength was its low overhead; tightening the pool to match sharded surfaced the structural weakness of single-pool-feeds-everything.'},
+    {l:'Verdict',t:'9.85% failure, 6.81 RPS. Bumping the pool back to 80 would restore previous behavior (3.3% failure, 13.9 RPS, 81ms p50). The lesson: <strong>sharding gives 4&times; pool capacity for free</strong>, on top of any query-parallelism benefit. /orders/all-page still fails almost half the time even with full pool &mdash; the unbounded scan is structural.'},
+  ]
+},
+sharded:{
+  id:'sharded',label:'Manual Sharding',color:'#f59e0b',glow:'rgba(217,119,6,.12)',
+  date:'2026-04-24 13:12',arch:'4 PostgreSQL shards, app-level SHA1 hash routing by user UUID, 1M users (250k/shard)',badge:'4 SHARDS',
+  totals:{req:2915,fail:20,fr:0.69,p50:190,p95:10000,rps:16.27},
+  endpoints:[
+    {key:'analytics',label:'[HEAVY] Analytics',path:'GET /analytics',req:47,fail:0,fr:0,p50:82000,p75:92000,p95:106000,p99:124000,max:124181,rps:0.26,avg:70982,errors:[]},
+    {key:'allpage',label:'Orders Paginated',path:'GET /orders/all-page',req:189,fail:0,fr:0,p50:10000,p75:14000,p95:18000,p99:24000,max:26644,rps:1.06,avg:10307,errors:[]},
+    {key:'ouser',label:'Orders by User',path:'GET /orders/user/{uuid}',req:569,fail:0,fr:0,p50:2100,p75:4100,p95:7400,p99:10000,max:12319,rps:3.18,avg:2826,errors:[]},
+    {key:'oid',label:'Order by ID',path:'GET /orders/{uuid}',req:606,fail:5,fr:0.8,p50:290,p75:1000,p95:2600,p99:3600,max:4542,rps:3.38,avg:730,errors:[{n:5,t:'HTTPError: 404 (shard-2 OOM crash &rarr; swallowed exception)'}]},
+    {key:'uid',label:'User by ID',path:'GET /users/{uuid}',req:1504,fail:15,fr:1.0,p50:59,p75:150,p95:1000,p99:2100,max:3938,rps:8.40,avg:193,errors:[{n:15,t:'HTTPError: 404 (shard-2 OOM crash &rarr; swallowed exception)'}]},
+  ],
+  insights:[
+    {l:'Hikari Pool Bump Healed Fan-Out',t:'After raising per-shard Hikari from 25 to 40, the cascade is gone. /analytics goes from <strong>72% failure / 46s p50</strong> (queries timing out at the 10s pool-acquire wall) to <strong>0% failure / 82s p50</strong> &mdash; queries actually complete now. Aggregate p50 dropped from 770ms to <strong>190ms</strong>. Sharded is the new throughput leader at <strong>16.27 RPS</strong>.'},
+    {l:'shard-2 OOM-Killed Mid-Run',t:'The 20 residual &quot;404s&quot; are not data misses. <code>db.log</code> shows 159 FATAL events on <strong>shard-2</strong>: <em>terminating any other active server processes</em> &rarr; <em>the database system is in recovery mode</em>. Linux cgroup OOM-killer reaped Postgres because <code>SHARDED_DB_MEMORY_LIMIT=256M</code> can&#39;t hold 40 backends &times; 10MB baseline + shared_buffers. Spring log echoes 841 <em>I/O error sending to backend</em> from JDBC. The catch-block in <code>UserRepository.findById</code> swallows them &rarr; HTTP 404.'},
+    {l:'Verdict: Speed Champion, Two Bugs Stacked',t:'Best run by RPS, latency, and (post-correction) failure rate. <strong>Two fixes stack:</strong> (1) Bump <code>SHARDED_DB_MEMORY_LIMIT</code> from 256M to &ge;512M (or drop max_connections back) to stop OOM kills. (2) Fix <code>UserRepository.findById</code> &mdash; let SQLException propagate to 500 instead of masquerading as 404. The strategy is correct (hash routing identical between Python seeder and Java <code>ShardRouter</code> &mdash; verified). The infrastructure is what&#39;s flaky.'},
+  ]
+},
+citus:{
+  id:'citus',label:'Citus Distributed',color:'#06b6d4',glow:'rgba(8,145,178,.12)',
+  date:'2026-04-24 13:16',arch:'Citus coordinator + 4 workers, distributed tables, 1M users',badge:'DISTRIBUTED',
+  totals:{req:769,fail:98,fr:12.74,p50:8600,p95:12000,rps:6.81},
+  endpoints:[
+    {key:'analytics',label:'[HEAVY] Analytics',path:'GET /analytics',req:104,fail:12,fr:11.5,p50:10000,p75:11000,p95:13000,p99:15000,max:15022,rps:0.92,avg:9740,errors:[{n:12,t:'CatchResponseError: Analytics failed: 500'}]},
+    {key:'allpage',label:'Orders Paginated',path:'GET /orders/all-page',req:43,fail:43,fr:100.0,p50:11000,p75:12000,p95:14000,p99:15000,max:15036,rps:0.38,avg:10444,errors:[{n:43,t:'HTTPError: 500 Server Error'}]},
+    {key:'ouser',label:'Orders by User',path:'GET /orders/user/{uuid}',req:104,fail:6,fr:5.8,p50:10000,p75:11000,p95:12000,p99:13000,max:13778,rps:0.92,avg:9599,errors:[{n:6,t:'HTTPError: 500 Server Error'}]},
+    {key:'oid',label:'Order by ID',path:'GET /orders/{uuid}',req:158,fail:13,fr:8.2,p50:7900,p75:9300,p95:10000,p99:10000,max:10128,rps:1.40,avg:7371,errors:[{n:13,t:'HTTPError: 500 Server Error'}]},
+    {key:'uid',label:'User by ID',path:'GET /users/{uuid}',req:360,fail:24,fr:6.7,p50:7800,p75:9100,p95:10000,p99:10000,max:10262,rps:3.19,avg:7588,errors:[{n:24,t:'HTTPError: 500 Server Error'}]},
+  ],
+  insights:[
+    {l:'Same Single-Pool Penalty as Single DB',t:'Citus uses the &quot;single&quot; Spring profile &mdash; one Hikari pool of 40 for the coordinator. Add a coordinator hop on every query and you get <strong>7&ndash;10s p50 across every endpoint</strong>. Almost all of that is pool-acquire wait, not Citus query time. The 12.7% failure rate is the same pattern as single, slightly worse from the extra hop.'},
+    {l:'Pagination Still 100% Failure',t:'/orders/all-page fails every time (43/43). Same structural bug as single &mdash; unpartitioned scan over 5M rows hits the timeout wall. Citus doesn&#39;t help here because the query has no shard key to route on; it broadcasts and merges, which is exactly what timed out.'},
+    {l:'Verdict',t:'Citus is being penalized by the wrong app profile. To unlock Citus you&#39;d need: (1) per-coordinator Hikari at &ge;80 to absorb both fan-out and point-read traffic, (2) re-write queries to be distribution-key-aware so the coordinator routes to one worker instead of broadcasting. As shipped, Citus pays for distribution overhead without using its strengths.'},
+  ]
+},
+lookup:{
+  id:'lookup',label:'Lookup Table',color:'#ec4899',glow:'rgba(219,39,119,.12)',
+  date:'2026-04-24 13:19',arch:'4 shards + central routing DB (UUID \u2192 shard_id), 1M users (250k/shard)',badge:'ROUTING TABLE',
+  totals:{req:915,fail:0,fr:0.0,p50:180,p95:65000,rps:5.11},
+  endpoints:[
+    {key:'analytics',label:'[HEAVY] Analytics',path:'GET /analytics',req:53,fail:0,fr:0,p50:35000,p75:60000,p95:98000,p99:104000,max:104296,rps:0.30,avg:44261,errors:[]},
+    {key:'allpage',label:'Orders Paginated',path:'GET /orders/all-page',req:46,fail:0,fr:0,p50:29000,p75:55000,p95:94000,p99:99000,max:98665,rps:0.26,avg:37022,errors:[]},
+    {key:'ouser',label:'Orders by User',path:'GET /orders/user/{uuid}',req:171,fail:0,fr:0,p50:1100,p75:1500,p95:2800,p99:3700,max:3828,rps:0.95,avg:1173,errors:[]},
+    {key:'oid',label:'Order by ID',path:'GET /orders/{uuid}',req:167,fail:0,fr:0,p50:19000,p75:43000,p95:88000,p99:97000,max:97148,rps:0.93,avg:27761,errors:[]},
+    {key:'uid',label:'User by ID',path:'GET /users/{uuid}',req:478,fail:0,fr:0,p50:18,p75:82,p95:200,p99:300,max:1040,rps:2.67,avg:54,errors:[]},
+  ],
+  insights:[
+    {l:'Reliability Champion: Zero Failures',t:'<strong>0 failures across 915 requests.</strong> Cleanest run in the benchmark. /users/{uuid} sustains <strong>18ms p50</strong> &mdash; routing-table PK lookup + shard PK lookup, both indexed and sub-millisecond. The 5th container (lookup-table DB) provides extra cluster headroom; under fan-out load other shards keep serving point reads while the routing DB absorbs router traffic.'},
+    {l:'Fair Comparison: Analytics Now Parallel',t:'Previous lookup runs cheated &mdash; <code>service/lookup/AnalyticsService</code> ran shards <em>sequentially</em> (one at a time), giving 4.3s p50. Now rewritten to fan out via <code>CompletableFuture</code> like sharded: <strong>35s p50</strong>. Latency ~8&times; higher because the cluster is actually loaded, but completion rate stays at 100%. Lookup absorbs what sharded barely survives and what single can&#39;t handle.'},
+    {l:'Verdict: Reliability vs Speed Trade',t:'<strong>0% failure, 5.11 RPS, 180ms aggregate p50.</strong> Sharded is faster and higher RPS (16.27); lookup is bulletproof. Tail latency is the price &mdash; /orders/{uuid} hits 19s p50 because heavy fan-out is hammering the same shards. Pick lookup when predictable success matters more than throughput; pick sharded when raw speed wins.'},
+  ]
+}
+};
+
+const METRICS={
+  p50:{label:'Median Latency (p50)',fmt:fmtMs,get:e=>e.p50,low:true},
+  p95:{label:'95th Percentile (p95)',fmt:fmtMs,get:e=>e.p95,low:true},
+  rps:{label:'Throughput (RPS)',fmt:v=>v.toFixed(2)+' /s',get:e=>e.rps,low:false},
+  fr:{label:'Failure Rate',fmt:v=>v.toFixed(1)+'%',get:e=>e.fr,low:true},
+};
+
+let cur='single',metric='p50';
+
+function fmtMs(ms){
+  if(ms<1)return ms.toFixed(2)+'ms';
+  if(ms<1000)return Math.round(ms)+'ms';
+  if(ms<10000)return(ms/1000).toFixed(1)+'s';
+  return(ms/1000).toFixed(0)+'s';
+}
+function fmtN(n){return n.toLocaleString()}
+function logPct(ms){if(ms<=0)return 0;return(Math.log10(Math.max(ms,1))/LOG_MAX)*100}
+function failCls(r){if(r>=90)return'crit';if(r>=60)return'crit';if(r>=30)return'high';if(r>=5)return'med';if(r>0)return'low';return'ok'}
+function failTxt(r){if(r>=60)return'\u2717 '+r.toFixed(1)+'%';if(r>=5)return'! '+r.toFixed(1)+'%';return'\u2713 '+r.toFixed(1)+'%'}
+function frClass(r){if(r>80)return'bad';if(r>40)return'mid';return'good'}
+
+function setColor(c,g){
+  document.documentElement.style.setProperty('--active',c);
+  document.documentElement.style.setProperty('--active-g',g);
+}
+
+/* ── STRATEGY VIEW ── */
+function renderStrategy(id){
+  const s=S[id];
+  setColor(s.color,s.glow);
+  document.getElementById('hdr-accent').style.color=s.color;
+
+  const epHTML=s.endpoints.map((e,i)=>{
+    const bw=logPct(e.p50).toFixed(1);
+    const errHTML=e.errors.map(er=>`<div class="err-row"><span class="err-type">\u00d7${er.n}</span><span class="err-msg">${er.t}</span></div>`).join('');
+    const pcts=[['p50',e.p50,'Median'],['p75',e.p75,'p75'],['p95',e.p95,'p95'],['p99',e.p99,'p99'],['max',e.max,'Max'],['avg',e.avg,'Avg'],['req',e.req,'Requests']];
+    const pctHTML=pcts.map(([k,v,l])=>{
+      if(k==='req')return`<div class="pb"><div class="pb-l">${l}</div><div class="pb-v">${fmtN(v)}</div><div class="pb-bar"><div class="pb-bar-f" style="width:100%"></div></div></div>`;
+      return`<div class="pb"><div class="pb-l">${l}</div><div class="pb-v">${fmtMs(v)}</div><div class="pb-bar"><div class="pb-bar-f" style="width:${logPct(v).toFixed(1)}%"></div></div></div>`;
+    }).join('');
+    return`
+<tr class="erow fi fi${i+1}" onclick="togExp('${id}','${e.key}')">
+  <td><div class="ep-name">${e.label}</div><div class="ep-path">${e.path}</div></td>
+  <td><span class="fbadge ${failCls(e.fr)}">${failTxt(e.fr)}</span></td>
+  <td class="lbar"><div class="lbar-t"><div class="lbar-f" style="width:${bw}%"></div></div><div class="lbar-v">${fmtMs(e.p50)}</div></td>
+  <td><div class="pcols"><div class="pc"><span class="pc-l">p75</span><span class="pc-v">${fmtMs(e.p75)}</span></div><div class="pc"><span class="pc-l">p95</span><span class="pc-v">${fmtMs(e.p95)}</span></div><div class="pc"><span class="pc-l">p99</span><span class="pc-v">${fmtMs(e.p99)}</span></div></div></td>
+  <td><div class="rps-v">${e.rps.toFixed(2)}/s</div></td>
+  <td><div class="rps-v" style="color:var(--text2)">${fmtN(e.req)}</div></td>
+</tr>
+<tr class="eexp" id="x-${id}-${e.key}">
+  <td colspan="6" style="padding:0"><div class="eexp-inner">
+    <div class="eexp-grid">${pctHTML}</div>
+    ${e.errors.length?`<div class="eexp-errors"><div class="eexp-errors-t">Error Breakdown</div>${errHTML}</div>`:''}
+  </div></td>
+</tr>`;
+  }).join('');
+
+  const insHTML=s.insights.map(i=>`<div><div class="ins-label">${i.l}</div><div class="ins-text">${i.t}</div></div>`).join('');
+
+  return`
+<div class="sbar fi">
+  <div class="sbar-id"><div class="sbar-line"></div><div><div class="sbar-name">${s.label}</div><div class="sbar-sub">${s.arch}</div></div></div>
+  <div class="sbar-stats">
+    <div class="ss"><div class="ss-l">Total Requests</div><div class="ss-v">${fmtN(s.totals.req)}</div></div>
+    <div class="ss"><div class="ss-l">Failure Rate</div><div class="ss-v ${frClass(s.totals.fr)}">${s.totals.fr}%</div></div>
+    <div class="ss"><div class="ss-l">Throughput</div><div class="ss-v">${s.totals.rps.toFixed(1)} /s</div></div>
+    <div class="ss"><div class="ss-l">Median p50</div><div class="ss-v">${fmtMs(s.totals.p50)}</div></div>
+    <div class="ss"><div class="ss-l">p95</div><div class="ss-v">${fmtMs(s.totals.p95)}</div></div>
+  </div>
+</div>
+<div class="stitle fi">Endpoint Breakdown <span style="font-family:var(--fm);font-size:.75rem;color:var(--text2);margin-left:6px">(click row to expand)</span></div>
+<table class="etbl">
+<thead><tr><th>Endpoint</th><th>Failure Rate</th><th>p50 Latency</th><th>Percentiles</th><th style="text-align:right">RPS</th><th style="text-align:right">Requests</th></tr></thead>
+<tbody>${epHTML}</tbody>
+</table>
+<div class="insights fi">
+  <div class="ins-hdr"><div class="ins-icon">\u25c8</div><div class="ins-title">Architecture Analysis \u00b7 ${s.label}</div></div>
+  <div class="ins-grid">${insHTML}</div>
+</div>`;
+}
+
+/* ── COMPARE VIEW ── */
+function renderCompare(){
+  setColor('#64748b','rgba(100,116,139,.1)');
+  document.getElementById('hdr-accent').style.color='';
+  const m=METRICS[metric];
+  const sids=['single','sharded','citus','lookup'];
+  const epKeys=['analytics','allpage','ouser','oid','uid'];
+  const epLabels={analytics:'[HEAVY] Analytics',allpage:'Orders Paginated',ouser:'Orders by User',oid:'Order by ID',uid:'User by ID'};
+
+  // find global max for linear metrics
+  let gmax=0;
+  sids.forEach(sid=>{S[sid].endpoints.forEach(ep=>{const v=m.get(ep);if(v>gmax)gmax=v})});
+
+  const metBtns=Object.entries(METRICS).map(([k,v])=>`<button class="mbtn ${k===metric?'on':''}" onclick="setMetric('${k}')">${v.label}</button>`).join('');
+  const legend=sids.map(sid=>`<div class="cmp-leg"><div class="cmp-dot" style="background:${S[sid].color}"></div>${S[sid].label}</div>`).join('');
+
+  const rows=epKeys.map(ek=>{
+    const vals=sids.map(sid=>{
+      const ep=S[sid].endpoints.find(e=>e.key===ek);
+      return{sid,val:ep?m.get(ep):0};
+    });
+    // find best/worst
+    const sorted=[...vals].sort((a,b)=>a.val-b.val);
+    const bestVal=m.low?sorted[0].val:sorted[sorted.length-1].val;
+    const worstVal=m.low?sorted[sorted.length-1].val:sorted[0].val;
+
+    const bars=vals.map(({sid,val})=>{
+      let pct;
+      if(metric==='p50'||metric==='p95')pct=logPct(val).toFixed(1);
+      else pct=gmax>0?((val/gmax)*100).toFixed(1):'0';
+      const cls=val===bestVal?'best':val===worstVal?'worst':'';
+      return`<div class="cmp-br"><div class="cmp-bs" style="color:${S[sid].color}">${S[sid].label.split(' ')[0]}</div><div class="cmp-bt"><div class="cmp-bf" style="width:${pct}%;background:${S[sid].color}"></div></div><div class="cmp-bv ${cls}">${m.fmt(val)}</div></div>`;
+    }).join('');
+    return`<div class="cmp-row fi"><div class="cmp-ep">${epLabels[ek]}</div><div class="cmp-bars">${bars}</div></div>`;
+  }).join('');
+
+  // aggregated totals
+  const totGetters={p50:s=>s.totals.p50,p95:s=>s.totals.p95,rps:s=>s.totals.rps,fr:s=>s.totals.fr};
+  const totVals=sids.map(sid=>({sid,val:totGetters[metric](S[sid])}));
+  const tsorted=[...totVals].sort((a,b)=>a.val-b.val);
+  const tBest=m.low?tsorted[0].val:tsorted[tsorted.length-1].val;
+  const tWorst=m.low?tsorted[tsorted.length-1].val:tsorted[0].val;
+  let tmax=0;totVals.forEach(t=>{if(t.val>tmax)tmax=t.val});
+  const totBars=totVals.map(({sid,val})=>{
+    let pct;
+    if(metric==='p50'||metric==='p95')pct=logPct(val).toFixed(1);
+    else pct=tmax>0?((val/tmax)*100).toFixed(1):'0';
+    const cls=val===tBest?'best':val===tWorst?'worst':'';
+    return`<div class="cmp-br"><div class="cmp-bs" style="color:${S[sid].color}">${S[sid].label.split(' ')[0]}</div><div class="cmp-bt"><div class="cmp-bf" style="width:${pct}%;background:${S[sid].color}"></div></div><div class="cmp-bv ${cls}">${m.fmt(val)}</div></div>`;
+  }).join('');
+
+  return`
+<div class="stitle fi">Compare All Strategies</div>
+<div class="cmp-ctrl fi">${metBtns}</div>
+<div class="cmp-legend fi">${legend}</div>
+<div class="cmp-chart">
+  <div class="cmp-hdr"><div>Endpoint</div><div>${m.label} &nbsp;<span style="font-size:.7rem;opacity:.6">${m.low?'\u2193 lower is better':'\u2191 higher is better'}</span></div></div>
+  ${rows}
+  <div class="cmp-row agg fi"><div class="cmp-ep">AGGREGATED</div><div class="cmp-bars">${totBars}</div></div>
+</div>
+<div class="insights fi" style="margin-top:28px;border-left-color:#64748b">
+  <div class="ins-hdr"><div class="ins-icon" style="background:rgba(100,116,139,.15);color:#94a3b8">\u25c8</div><div class="ins-title" style="color:#94a3b8">Summary Verdict</div></div>
+  <div class="ins-grid">
+    <div><div class="ins-label" style="color:#f59e0b">Speed Champion: Manual Sharding</div><div class="ins-text"><strong>0.69% failure, 16.27 RPS, 190ms p50</strong> &mdash; best on raw speed and throughput. Hikari pool bump (25 &rarr; 40 per shard) eliminated the fan-out cascade. /users 59ms p50, /orders 290ms p50. The 20 residual &quot;404s&quot; are <strong>shard-2 OOM-crashing mid-run</strong> (cgroup memory limit too tight) being silently masked by a swallowed-exception bug in the repo &mdash; not real misses.</div></div>
+    <div><div class="ins-label" style="color:#ec4899">Reliability Champion: Lookup Table</div><div class="ins-text"><strong>0% failure across 915 requests.</strong> /users 18ms p50, zero failures even on /analytics and /all-page (now actually fan-out parallel). The 5th container absorbs router traffic without starving point reads. Pays in tail latency (35s analytics p50, vs sharded&#39;s 82s &mdash; both honest now).</div></div>
+    <div><div class="ins-label" style="color:#8b5cf6">Single &amp; Citus: Pool-Starved</div><div class="ins-text">Single regressed (3.3% &rarr; <strong>9.85% failure</strong>) when its pool dropped 80 &rarr; 40. Single uses <em>one pool for everything</em>; sharded gets 4&times;40=160. Citus inherits single&#39;s pool plus a coordinator hop (12.74% failure, 7&ndash;10s p50 across all endpoints). <strong>Sharding&#39;s structural advantage isn&#39;t just query parallelism &mdash; it&#39;s 4&times; pool capacity for free.</strong></div></div>
+  </div>
+</div>`;
+}
+
+/* ── RENDER ── */
+function render(){
+  const root=document.getElementById('root');
+  root.innerHTML=cur==='compare'?renderCompare():renderStrategy(cur);
+  // animate bars
+  requestAnimationFrame(()=>{
+    root.querySelectorAll('.lbar-f,.cmp-bf,.pb-bar-f').forEach(el=>{
+      const w=el.style.width;el.style.width='0%';
+      requestAnimationFrame(()=>{el.style.width=w});
+    });
+  });
+}
+
+function togExp(sid,ek){
+  const el=document.getElementById('x-'+sid+'-'+ek);
+  if(!el)return;
+  const open=el.classList.contains('open');
+  document.querySelectorAll('.eexp.open').forEach(r=>r.classList.remove('open'));
+  if(!open)el.classList.add('open');
+}
+
+function setMetric(k){metric=k;render()}
+
+document.querySelectorAll('.tab').forEach(t=>{
+  t.addEventListener('click',()=>{
+    document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));
+    t.classList.add('on');
+    cur=t.dataset.s;
+    render();
+  });
+});
+
+render();
+</script>
+</body>
+</html>
