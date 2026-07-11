@@ -31,11 +31,13 @@ Override the seed or anchor via env:
 """
 
 import csv
+import math
 import os
 import random
 import logging
 import itertools
 import datetime as dt
+from collections import defaultdict
 from pathlib import Path
 from typing import Iterator, Optional
 from locust import HttpUser, task, events
@@ -59,6 +61,15 @@ DATA_DIR = Path(os.environ.get("BENCH_DATA_DIR", Path(__file__).resolve().parent
 # Populated once at test_start from the API
 SAMPLE_USER_IDS: list[str] = []
 SAMPLE_ORDER_IDS: list[str] = []
+
+# Server-side execution times (ms) per endpoint name, taken from the
+# X-Execution-Time-Ms response header. client_latency - server_time is the
+# cost of everything above the database (routing, fan-out, coordinator
+# aggregation, serialization) — the quantity this benchmark compares.
+# Written to <csv_prefix>_server_timing.csv at test stop.
+# NOTE: single-process runs only; distributed workers would each write the
+# same file.
+SERVER_TIMINGS: dict[str, list[float]] = defaultdict(list)
 
 # Global VU-id allocator — each HttpUser instance claims a unique id on start,
 # which seeds its local RNG. Using a counter (rather than id(self)) keeps the
@@ -142,6 +153,7 @@ def on_test_start(environment, **kwargs):
     # Reset the VU counter so a second test in the same process re-seeds VUs identically.
     global _vu_counter
     _vu_counter = itertools.count()
+    SERVER_TIMINGS.clear()
 
     logger.info(
         f"Sampling complete: {len(SAMPLE_USER_IDS)} users, "
@@ -256,13 +268,51 @@ class MixedWorkloadUser(_SeededUser):
 @events.request.add_listener
 def on_request(request_type, name, response_time, response_length,
                response, context, exception, **kwargs):
-    if "[HEAVY]" in name and response is not None:
-        exec_time = response.headers.get("X-Execution-Time-Ms", "N/A")
-        logger.info(f"Analytics: client={response_time:.0f}ms, server={exec_time}ms")
+    if response is None:
+        return
+    exec_time = response.headers.get("X-Execution-Time-Ms")
+    if exec_time is not None:
+        try:
+            SERVER_TIMINGS[name].append(float(exec_time))
+        except ValueError:
+            pass
+    if "[HEAVY]" in name:
+        logger.info(f"Analytics: client={response_time:.0f}ms, server={exec_time or 'N/A'}ms")
+
+
+def _percentile(sorted_values: list[float], pct: float) -> float:
+    """Nearest-rank percentile of an already-sorted list."""
+    rank = max(1, math.ceil(pct / 100 * len(sorted_values)))
+    return sorted_values[rank - 1]
+
+
+def _write_server_timing_csv(csv_prefix: str) -> None:
+    path = f"{csv_prefix}_server_timing.csv"
+    with open(path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            "Name", "Request Count", "Min Server Time (ms)", "Median Server Time (ms)",
+            "95% Server Time (ms)", "Max Server Time (ms)", "Average Server Time (ms)",
+        ])
+        for name, values in sorted(SERVER_TIMINGS.items()):
+            ordered = sorted(values)
+            writer.writerow([
+                name,
+                len(ordered),
+                round(ordered[0], 1),
+                round(_percentile(ordered, 50), 1),
+                round(_percentile(ordered, 95), 1),
+                round(ordered[-1], 1),
+                round(sum(ordered) / len(ordered), 1),
+            ])
+    logger.info(f"Server-side timing written to {path}")
 
 
 @events.test_stop.add_listener
 def on_test_stop(environment, **kwargs):
+    csv_prefix = getattr(environment.parsed_options, "csv_prefix", None)
+    if csv_prefix and SERVER_TIMINGS:
+        _write_server_timing_csv(csv_prefix)
     logger.info("=" * 60)
     logger.info("BENCHMARK COMPLETE")
     logger.info("=" * 60)
