@@ -1,13 +1,10 @@
-#!/usr/bin/env python3
 import logging
-import sys
 import uuid
 from pathlib import Path
 
 from psycopg import Connection, connect
 
 from utilities.config import DbConfig
-from utilities.constants import EXIT_FAILURE
 from utilities.shard_utils import get_shard_index
 
 
@@ -19,6 +16,9 @@ class CsvLoader:
     user/order/order_item range is seeked directly — no full-file scanning.
 
     Shard routing is computed at load time from user_id via get_shard_index().
+
+    Errors propagate — a partially loaded dataset must abort the run, not be
+    logged and shrugged off.
     """
 
     USERS_CSV = "users.csv"
@@ -83,16 +83,12 @@ class CsvLoader:
     def load_single(self, db_config: DbConfig, users_count: int) -> None:
         self.logger.info(f"Loading {users_count:,} users from CSV (single mode)...")
         user_ids = self._first_n_user_ids(users_count)
-        try:
-            with connect(str(db_config), autocommit=False) as conn:
-                self._copy_products(conn)
-                self._copy_users(conn, user_ids)
-                self._copy_orders(conn, user_ids)
-                self._copy_order_items(conn, user_ids)
-                conn.commit()
-        except Exception as e:
-            self.logger.error(f"Error loading CSV data (single mode): {e}")
-            sys.exit(EXIT_FAILURE)
+        with connect(db_config.conninfo) as conn:
+            self._copy_products(conn)
+            self._copy_users(conn, user_ids)
+            self._copy_orders(conn, user_ids)
+            self._copy_order_items(conn, user_ids)
+            conn.commit()
         self.logger.info("Single mode CSV load complete.")
 
     def load_sharded(self, shard_configs: tuple[DbConfig, ...], users_count: int) -> None:
@@ -100,18 +96,14 @@ class CsvLoader:
         user_ids = self._first_n_user_ids(users_count)
         users_by_shard = self._group_by_shard(user_ids)
 
-        try:
-            for shard_idx, shard_user_ids in users_by_shard.items():
-                with connect(str(shard_configs[shard_idx]), autocommit=False) as conn:
-                    self._copy_products(conn)
-                    self._copy_users(conn, shard_user_ids)
-                    self._copy_orders(conn, shard_user_ids)
-                    self._copy_order_items(conn, shard_user_ids)
-                    conn.commit()
-                self.logger.info(f"Shard {shard_idx + 1}: loaded {len(shard_user_ids):,} users.")
-        except Exception as e:
-            self.logger.error(f"Error loading CSV data (sharded mode): {e}")
-            sys.exit(EXIT_FAILURE)
+        for shard_idx, shard_user_ids in users_by_shard.items():
+            with connect(shard_configs[shard_idx].conninfo) as conn:
+                self._copy_products(conn)
+                self._copy_users(conn, shard_user_ids)
+                self._copy_orders(conn, shard_user_ids)
+                self._copy_order_items(conn, shard_user_ids)
+                conn.commit()
+            self.logger.info(f"Shard {shard_idx + 1}: loaded {len(shard_user_ids):,} users.")
         self.logger.info("Sharded mode CSV load complete.")
 
     def load_sharded_lookup(
@@ -124,22 +116,18 @@ class CsvLoader:
         user_ids = self._first_n_user_ids(users_count)
         users_by_shard = self._group_by_shard(user_ids)
 
-        try:
-            for shard_idx, shard_user_ids in users_by_shard.items():
-                with connect(str(shard_configs[shard_idx]), autocommit=False) as conn:
-                    self._copy_products(conn)
-                    self._copy_users(conn, shard_user_ids)
-                    self._copy_orders(conn, shard_user_ids)
-                    self._copy_order_items(conn, shard_user_ids)
-                    conn.commit()
-                self.logger.info(f"Shard {shard_idx + 1}: loaded {len(shard_user_ids):,} users.")
+        for shard_idx, shard_user_ids in users_by_shard.items():
+            with connect(shard_configs[shard_idx].conninfo) as conn:
+                self._copy_products(conn)
+                self._copy_users(conn, shard_user_ids)
+                self._copy_orders(conn, shard_user_ids)
+                self._copy_order_items(conn, shard_user_ids)
+                conn.commit()
+            self.logger.info(f"Shard {shard_idx + 1}: loaded {len(shard_user_ids):,} users.")
 
-            with connect(str(main_db_config), autocommit=False) as main_conn:
-                self._copy_lookup_entries(main_conn, users_by_shard)
-                main_conn.commit()
-        except Exception as e:
-            self.logger.error(f"Error loading CSV data (sharded-lookup-table mode): {e}")
-            sys.exit(EXIT_FAILURE)
+        with connect(main_db_config.conninfo) as main_conn:
+            self._copy_lookup_entries(main_conn, users_by_shard)
+            main_conn.commit()
         self.logger.info("Sharded lookup-table mode CSV load complete.")
 
     # ------------------------------------------------------------------

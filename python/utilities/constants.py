@@ -24,13 +24,13 @@ PRODUCT_LOG_INTERVAL = 1000
 ORDER_LOG_INTERVAL = 1000
 
 # Batch Processing
-DEFAULT_USER_BATCH_SIZE_SHARDED = 50000
-DEFAULT_USER_BATCH_SIZE_SINGLE = 50000
-DEFAULT_PRODUCT_FETCH_LIMIT_SHARDED = 50000
-DEFAULT_PRODUCT_FETCH_LIMIT_SINGLE = 50000
-DEFAULT_BATCH_SIZE = 50000
+DEFAULT_BATCH_SIZE = 50000           # rows generated/inserted per outer batch
+DEFAULT_USER_BATCH_SIZE = 50000      # users fetched per page when generating orders
+DEFAULT_PRODUCT_FETCH_LIMIT = 50000  # product UUIDs sampled for order items
 
 # Random Generation Parameters
+# Variance knobs: 0 = every user/order gets exactly the configured count
+# (deterministic totals); raise to add spread per user/order.
 ORDERS_VARIANCE = 0
 ITEMS_VARIANCE = 0
 MIN_ITEMS_PER_ORDER = 1
@@ -46,7 +46,6 @@ ORDER_AMOUNT_DECIMAL_PLACES = 2
 ORDER_STATUSES: list[str] = ['pending', 'shipped', 'delivered', 'cancelled']
 
 # Exit Codes
-EXIT_SUCCESS = 0
 EXIT_FAILURE = 1
 
 # CLI Default Values
