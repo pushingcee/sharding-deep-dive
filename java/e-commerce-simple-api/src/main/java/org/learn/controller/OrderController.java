@@ -33,6 +33,18 @@ public class OrderController {
     }
 
     /**
+     * OOM/memory-pressure benchmark endpoint: fetches EVERY order (joined to
+     * its user) with no limit, on purpose. On a full seed this demands the
+     * whole orders table at once — one giant scan on the single DB vs four
+     * parallel quarter-size scans on the sharded topologies. Expect it to
+     * hurt; that is the point. Not part of the Locust workload.
+     */
+    @GetMapping("/all")
+    public ResponseEntity<List<Order>> getAllOrders() {
+        return ResponseEntity.ok(this.orderService.getAllOrders());
+    }
+
+    /**
      * Keyset-paginated order listing — the same algorithm in every strategy.
      * Response: {"content": [...], "nextCursor": "&lt;order_date&gt;|&lt;order_id&gt;"}.
      * Pass nextCursor back as ?cursor= to fetch the following page; it is

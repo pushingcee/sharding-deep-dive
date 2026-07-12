@@ -42,6 +42,10 @@ public class OrderRepository implements org.learn.repository.OrderRepository {
         return jdbcTemplate.query(OrderSql.FIND_BY_USER_ID, ORDER_ROW_MAPPER, userId);
     }
 
+    public List<Order> findAll() {
+        return jdbcTemplate.query(OrderSql.FIND_ALL, ORDER_ROW_MAPPER);
+    }
+
     public List<Order> findPageKeyset(LocalDateTime cursorDate, UUID cursorId, int pageSize) {
         if (cursorDate == null) {
             return jdbcTemplate.query(OrderSql.PAGE_KEYSET_FIRST, ORDER_ROW_MAPPER, pageSize);

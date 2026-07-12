@@ -90,6 +90,25 @@ public class OrderRepository implements org.learn.repository.OrderRepository {
         return template.query(OrderSql.FIND_BY_USER_ID, ORDER_ROW_MAPPER, userId);
     }
 
+    public List<Order> findAll() {
+        List<CompletableFuture<List<Order>>> futures = new ArrayList<>(shardTemplates.length);
+
+        for (JdbcTemplate template : shardTemplates) {
+            futures.add(CompletableFuture.supplyAsync(
+                () -> template.query(OrderSql.FIND_ALL, ORDER_ROW_MAPPER),
+                VIRTUAL_EXECUTOR
+            ));
+        }
+
+        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+
+        List<Order> allOrders = new ArrayList<>();
+        for (CompletableFuture<List<Order>> future : futures) {
+            allOrders.addAll(future.join());
+        }
+        return allOrders;
+    }
+
     public Order save(Order order) {
         JdbcTemplate template = shardTemplates[shardedDataSource.getShardIndex(order.getUser().getUser_id())];
 

@@ -42,4 +42,8 @@ public class OrderService implements org.learn.service.OrderService {
     public List<Order> getAllOrdersForUserByUuid(UUID userId) {
         return orderRepository.findByUserId(userId);
     }
+
+    public List<Order> getAllOrders() {
+        return orderRepository.findAll();
+    }
 }

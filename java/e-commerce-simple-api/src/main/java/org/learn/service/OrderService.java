@@ -14,4 +14,7 @@ public interface OrderService {
 
     /** Cursor-based keyset pagination. cursor=null returns the first page. */
     List<Order> getAllOrdersKeyset(String cursor, int pageSize);
+
+    /** Unbounded fetch of every order — the OOM/memory-pressure benchmark. */
+    List<Order> getAllOrders();
 }
