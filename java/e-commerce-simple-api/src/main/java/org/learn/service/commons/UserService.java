@@ -6,7 +6,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Service;
 
-import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -22,9 +21,4 @@ public class UserService implements org.learn.service.UserService {
     public Optional<User> getUser(UUID user_uuid) {
         return userRepository.findById(user_uuid);
     }
-
-    public List<User> getAllUsers() {
-        return userRepository.findAll();
-    }
-
 }

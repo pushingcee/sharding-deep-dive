@@ -25,30 +25,17 @@
     </properties>
 
     <dependencies>
-<!--        <dependency>-->
-<!--            <groupId>org.springframework.boot</groupId>-->
-<!--            <artifactId>spring-boot-starter-data-jdbc</artifactId>-->
-<!--        </dependency>-->
+        <!-- All repositories are JdbcTemplate-based; JPA/Hibernate is
+             deliberately absent so every sharding strategy runs the same
+             data-access stack. -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-data-jpa</artifactId>
+            <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-data-rest</artifactId>
+            <artifactId>spring-boot-starter-jdbc</artifactId>
         </dependency>
-<!--        <dependency>-->
-<!--            <groupId>org.springframework.boot</groupId>-->
-<!--            <artifactId>spring-boot-starter-jdbc</artifactId>-->
-<!--        </dependency>-->
-<!--        <dependencies>-->
-<!--            <dependency>-->
-<!--                <groupId>org.apache.shardingsphere</groupId>-->
-<!--                <artifactId>shardingsphere-jdbc</artifactId>-->
-<!--                <version>${shardingsphere.version}</version>-->
-<!--            </dependency>-->
-<!--        </dependencies>-->
-
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>

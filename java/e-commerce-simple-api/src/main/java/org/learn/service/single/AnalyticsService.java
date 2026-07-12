@@ -7,6 +7,7 @@ import org.springframework.context.annotation.Profile;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
+import javax.sql.DataSource;
 import java.sql.Date;
 import java.time.LocalDate;
 import java.util.List;
@@ -17,8 +18,8 @@ public class AnalyticsService implements org.learn.service.AnalyticsService {
 
     private final JdbcTemplate jdbcTemplate;
 
-    public AnalyticsService(@Autowired JdbcTemplate jdbcTemplate) {
-        this.jdbcTemplate = jdbcTemplate;
+    public AnalyticsService(@Autowired DataSource dataSource) {
+        this.jdbcTemplate = new JdbcTemplate(dataSource);
     }
 
     @Override

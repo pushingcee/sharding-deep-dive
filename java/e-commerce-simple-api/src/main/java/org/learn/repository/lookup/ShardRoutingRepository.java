@@ -1,10 +1,7 @@
 package org.learn.repository.lookup;
 
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.annotation.Profile;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
-import org.springframework.stereotype.Repository;
 
 import javax.sql.DataSource;
 import java.util.List;
@@ -18,9 +15,10 @@ import java.util.UUID;
  * object construction) that would inflate the measured routing cost.
  * Failures propagate: a broken routing DB should surface as a 500, not be
  * silently converted into a 404.
+ *
+ * Instantiated only by LookupTableShardingDataSourceConfig — not
+ * component-scanned.
  */
-@Profile("lookup")
-@Repository
 public class ShardRoutingRepository {
 
     private static final String FIND_SHARD_SQL =
@@ -31,7 +29,6 @@ public class ShardRoutingRepository {
 
     private final JdbcTemplate jdbcTemplate;
 
-    @Autowired
     public ShardRoutingRepository(DataSource shardRoutingDataSource) {
         this.jdbcTemplate = new JdbcTemplate(shardRoutingDataSource);
     }

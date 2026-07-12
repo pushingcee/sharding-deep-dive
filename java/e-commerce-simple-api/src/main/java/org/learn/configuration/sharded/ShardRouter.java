@@ -1,22 +1,24 @@
 package org.learn.configuration.sharded;
 
-import org.springframework.context.annotation.Profile;
-import org.springframework.stereotype.Component;
-
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.UUID;
 
-@Component
-@Profile("sharded")
 /*
  * This is essentially what Claude generated
  * when I asked it to generate the same logic as in the python script
- * python/utilities/commons/utilities.py(get_shard_index)
+ * python/utilities/shard_utils.py (get_shard_index)
  * The idea is more important than the implementation itself.
+ *
+ * Instantiated only by ManualShardingDataSourceConfig — not component-scanned.
  */
 public class ShardRouter {
 
+    /**
+     * Modulus of the hash ring. Must stay in sync with
+     * python/utilities/constants.py DEFAULT_NUM_SHARDS — the seeder and this
+     * router must agree on where a user lives or every lookup misses.
+     */
     private static final int NUM_SHARDS = 4;
 
     public int getShardIndex(UUID userId) {
@@ -56,9 +58,5 @@ public class ShardRouter {
         } catch (NoSuchAlgorithmException e) {
             throw new RuntimeException("SHA-1 algorithm not available", e);
         }
-    }
-
-    public int getShardIndex(String userId) {
-        return getShardIndex(UUID.fromString(userId));
     }
 }
