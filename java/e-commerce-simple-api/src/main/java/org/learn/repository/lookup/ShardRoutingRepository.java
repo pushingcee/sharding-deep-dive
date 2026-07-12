@@ -11,38 +11,33 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+/**
+ * Routing lookup against the central user_data_shard table. This is the hot
+ * path of the lookup architecture — every user-routed request pays this
+ * round-trip — so it must not carry extra work (no logging, no per-call
+ * object construction) that would inflate the measured routing cost.
+ * Failures propagate: a broken routing DB should surface as a 500, not be
+ * silently converted into a 404.
+ */
 @Profile("lookup")
 @Repository
 public class ShardRoutingRepository {
 
-    private final DataSource shardRoutingDataSource;
+    private static final String FIND_SHARD_SQL =
+        "SELECT user_id, shard_id FROM user_data_shard WHERE user_id = ?";
+
+    private static final RowMapper<ShardLocation> SHARD_LOCATION_ROW_MAPPER = (rs, rowNum) ->
+        new ShardLocation(UUID.fromString(rs.getString("user_id")), rs.getInt("shard_id"));
+
+    private final JdbcTemplate jdbcTemplate;
 
     @Autowired
     public ShardRoutingRepository(DataSource shardRoutingDataSource) {
-        this.shardRoutingDataSource = shardRoutingDataSource;
+        this.jdbcTemplate = new JdbcTemplate(shardRoutingDataSource);
     }
 
-    RowMapper<ShardLocation> shardLocationRowMapper = (rs, rowNum) -> {
-        UUID user_id = UUID.fromString(rs.getString("user_id"));
-        int shard_id = rs.getInt("shard_id");
-        return new ShardLocation(user_id, shard_id);
-    };
-
-
     public Optional<ShardLocation> findById(UUID userId) {
-        JdbcTemplate jdbcTemplate = new JdbcTemplate(shardRoutingDataSource);
-
-        try {
-            String sql = "SELECT user_id, shard_id FROM user_data_shard WHERE user_id = ?";
-            System.out.println("User id:" + userId);
-            List<ShardLocation> users = jdbcTemplate.query(sql, shardLocationRowMapper, userId);
-
-            if (!users.isEmpty()) {
-                return Optional.of(users.get(0));
-            }
-        } catch (Exception e) {
-            System.err.println("Error finding user by ID: " + e.getMessage());
-        }
-        return Optional.empty();
+        List<ShardLocation> locations = jdbcTemplate.query(FIND_SHARD_SQL, SHARD_LOCATION_ROW_MAPPER, userId);
+        return locations.isEmpty() ? Optional.empty() : Optional.of(locations.get(0));
     }
 }

@@ -19,8 +19,14 @@ public class ShardedDataSource {
 
 
     public DataSource getDataSource(UUID uuid){
-        return shards[shardRouter.getShardIndex(uuid) -1 ];
+        return shards[getShardIndex(uuid)];
     }
+
+    /** 0-based shard index; the lookup table stores shard_id 1-based. */
+    public int getShardIndex(UUID uuid){
+        return shardRouter.getShardIndex(uuid) - 1;
+    }
+
     public DataSource getDataSourceByIndex(int index){
         return shards[index];
     }

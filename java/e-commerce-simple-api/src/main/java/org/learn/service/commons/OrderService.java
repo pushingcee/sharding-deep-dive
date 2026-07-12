@@ -1,4 +1,4 @@
-package org.learn.service.sharded;
+package org.learn.service.commons;
 
 import org.learn.domain.Order;
 import org.learn.repository.OrderRepository;
@@ -15,7 +15,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 @Service
-@Profile({"sharded", "lookup"})
+@Profile({"single", "sharded", "lookup"})
 public class OrderService implements org.learn.service.OrderService {
     private final OrderRepository orderRepository;
 
@@ -55,4 +55,4 @@ public class OrderService implements org.learn.service.OrderService {
     public Optional<List<Order>> getAllOrdersForUserByUuid(UUID userId) {
         return Optional.of(orderRepository.findByUserId(userId));
     }
-} 
+}

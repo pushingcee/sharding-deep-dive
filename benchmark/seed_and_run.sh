@@ -282,7 +282,7 @@ if run_strategy single; then
   kill_spring
   start_spring "single" "single" "$TS"
   wait_spring
-  sleep 30  # allow pool to warm up before validation
+  sleep 5  # settle time before validation — keep identical across all strategies
 
   validate_spring_data || { kill $SPRING_PID 2>/dev/null || true; kill_spring; dc -f "$SINGLE_BENCH_COMPOSE" down; exit 1; }
 
