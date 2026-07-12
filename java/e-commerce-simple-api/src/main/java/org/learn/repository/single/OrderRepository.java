@@ -38,10 +38,6 @@ public class OrderRepository implements org.learn.repository.OrderRepository {
         return orders.isEmpty() ? Optional.empty() : Optional.of(orders.get(0));
     }
 
-    public List<Order> findAll() {
-        return jdbcTemplate.query(OrderSql.FIND_ALL, ORDER_ROW_MAPPER);
-    }
-
     public List<Order> findByUserId(UUID userId) {
         return jdbcTemplate.query(OrderSql.FIND_BY_USER_ID, ORDER_ROW_MAPPER, userId);
     }
@@ -56,8 +52,9 @@ public class OrderRepository implements org.learn.repository.OrderRepository {
 
     public Order save(Order order) {
         if (order.getOrder_id() == null) {
+            LocalDateTime orderDate = order.getOrderDate() != null ? order.getOrderDate() : LocalDateTime.now();
             jdbcTemplate.update(OrderSql.INSERT,
-                    UUID.randomUUID(), order.getUser().getUser_id(),
+                    UUID.randomUUID(), order.getUser().getUser_id(), orderDate,
                     order.getTotalAmount(), order.getOrderStatus());
         } else {
             jdbcTemplate.update(OrderSql.UPDATE,

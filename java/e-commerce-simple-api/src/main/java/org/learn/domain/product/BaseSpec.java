@@ -22,7 +22,7 @@ import java.util.List;
 
 })
 @JsonIgnoreProperties(value = { "category" })
-sealed class BaseSpec permits BookSpec, ClothingSpec, ElectronicsSpec, HomeSpec, OutdoorSpec {
+public sealed class BaseSpec permits BookSpec, ClothingSpec, ElectronicsSpec, HomeSpec, OutdoorSpec {
     @JsonProperty("weight_kg")
     String weight;
     String material;

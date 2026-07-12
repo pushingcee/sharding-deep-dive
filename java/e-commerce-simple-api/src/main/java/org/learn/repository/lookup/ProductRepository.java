@@ -1,6 +1,7 @@
 package org.learn.repository.lookup;
 
 import org.learn.domain.product.Product;
+import org.learn.repository.commons.ProductSql;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Profile;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -28,13 +29,7 @@ public class ProductRepository implements org.learn.repository.ProductRepository
     }
 
     public Optional<Product> findById(UUID productId) {
-        String sql = "SELECT product_id, name, description, price, category FROM products WHERE product_id = ?";
-        List<Product> products = jdbcTemplate.query(sql, PRODUCT_ROW_MAPPER, productId.toString());
+        List<Product> products = jdbcTemplate.query(ProductSql.FIND_BY_ID, PRODUCT_ROW_MAPPER, productId);
         return products.isEmpty() ? Optional.empty() : Optional.of(products.get(0));
-    }
-
-    public List<Product> findAll() {
-        String sql = "SELECT product_id, name, description, price, category FROM products";
-        return jdbcTemplate.query(sql, PRODUCT_ROW_MAPPER);
     }
 }

@@ -15,20 +15,18 @@ import java.util.List;
 @Profile("sharded")
 public class AnalyticsService implements org.learn.service.AnalyticsService {
 
-    private static final int NUM_SHARDS = 4;
-
     private final JdbcTemplate[] shardTemplates;
 
     @Autowired
     public AnalyticsService(ShardedDataSource shardedDataSource) {
-        this.shardTemplates = new JdbcTemplate[NUM_SHARDS];
-        for (int i = 0; i < NUM_SHARDS; i++) {
+        this.shardTemplates = new JdbcTemplate[shardedDataSource.getShardCount()];
+        for (int i = 0; i < shardTemplates.length; i++) {
             shardTemplates[i] = new JdbcTemplate(shardedDataSource.getDataSourceByIndex(i));
         }
     }
 
     @Override
     public List<AnalyticsResult> executeHeavyAnalyticsQuery(LocalDate from, LocalDate to) {
-        return AnalyticsFanOut.execute(i -> shardTemplates[i], NUM_SHARDS, from, to);
+        return AnalyticsFanOut.execute(i -> shardTemplates[i], shardTemplates.length, from, to);
     }
 }

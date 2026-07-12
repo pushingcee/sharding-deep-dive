@@ -38,7 +38,7 @@ public final class OrderSql {
         " ORDER BY o.order_date DESC, o.order_id DESC LIMIT ?";
 
     public static final String INSERT =
-        "INSERT INTO orders (order_id, user_id, total_amount, status) VALUES (?, ?, ?, ?)";
+        "INSERT INTO orders (order_id, user_id, order_date, total_amount, status) VALUES (?, ?, ?, ?, ?)";
 
     public static final String UPDATE =
         "UPDATE orders SET user_id = ?, total_amount = ?, status = ? WHERE order_id = ?";

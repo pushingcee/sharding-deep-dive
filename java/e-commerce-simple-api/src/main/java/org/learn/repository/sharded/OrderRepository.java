@@ -23,7 +23,6 @@ import static org.learn.repository.commons.RowMappers.ORDER_ROW_MAPPER;
 @Repository
 public class OrderRepository implements org.learn.repository.OrderRepository {
 
-    private static final int NUM_SHARDS = 4;
     private static final ExecutorService VIRTUAL_EXECUTOR = Executors.newVirtualThreadPerTaskExecutor();
 
     private final ShardedDataSource shardedDataSource;
@@ -32,17 +31,16 @@ public class OrderRepository implements org.learn.repository.OrderRepository {
     @Autowired
     public OrderRepository(ShardedDataSource shardedDataSource) {
         this.shardedDataSource = shardedDataSource;
-        this.shardTemplates = new JdbcTemplate[NUM_SHARDS];
-        for (int i = 0; i < NUM_SHARDS; i++) {
-            this.shardTemplates[i] = new JdbcTemplate(shardedDataSource.getDataSourceByIndex(i));
+        this.shardTemplates = new JdbcTemplate[shardedDataSource.getShardCount()];
+        for (int i = 0; i < shardTemplates.length; i++) {
+            shardTemplates[i] = new JdbcTemplate(shardedDataSource.getDataSourceByIndex(i));
         }
     }
 
     public List<Order> findPageKeyset(LocalDateTime cursorDate, UUID cursorId, int pageSize) {
-        List<CompletableFuture<List<Order>>> futures = new ArrayList<>();
+        List<CompletableFuture<List<Order>>> futures = new ArrayList<>(shardTemplates.length);
 
-        for (int i = 0; i < NUM_SHARDS; i++) {
-            JdbcTemplate template = shardTemplates[i];
+        for (JdbcTemplate template : shardTemplates) {
             futures.add(CompletableFuture.supplyAsync(() -> {
                 if (cursorDate == null) {
                     return template.query(OrderSql.PAGE_KEYSET_FIRST, ORDER_ROW_MAPPER, pageSize);
@@ -55,7 +53,7 @@ public class OrderRepository implements org.learn.repository.OrderRepository {
 
         CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
 
-        List<Order> merged = new ArrayList<>(pageSize * NUM_SHARDS);
+        List<Order> merged = new ArrayList<>(pageSize * shardTemplates.length);
         for (CompletableFuture<List<Order>> future : futures) {
             merged.addAll(future.join());
         }
@@ -68,10 +66,9 @@ public class OrderRepository implements org.learn.repository.OrderRepository {
     }
 
     public Optional<Order> findById(UUID orderId) {
-        List<CompletableFuture<Optional<Order>>> futures = new ArrayList<>();
+        List<CompletableFuture<Optional<Order>>> futures = new ArrayList<>(shardTemplates.length);
 
-        for (int i = 0; i < NUM_SHARDS; i++) {
-            JdbcTemplate template = shardTemplates[i];
+        for (JdbcTemplate template : shardTemplates) {
             futures.add(CompletableFuture.supplyAsync(() -> {
                 List<Order> orders = template.query(OrderSql.FIND_BY_ID, ORDER_ROW_MAPPER, orderId);
                 return orders.isEmpty() ? Optional.<Order>empty() : Optional.of(orders.get(0));
@@ -88,26 +85,6 @@ public class OrderRepository implements org.learn.repository.OrderRepository {
         return Optional.empty();
     }
 
-    public List<Order> findAll() {
-        List<CompletableFuture<List<Order>>> futures = new ArrayList<>();
-
-        for (int i = 0; i < NUM_SHARDS; i++) {
-            JdbcTemplate template = shardTemplates[i];
-            futures.add(CompletableFuture.supplyAsync(
-                () -> template.query(OrderSql.FIND_ALL, ORDER_ROW_MAPPER),
-                VIRTUAL_EXECUTOR
-            ));
-        }
-
-        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
-
-        List<Order> allOrders = new ArrayList<>();
-        for (CompletableFuture<List<Order>> future : futures) {
-            allOrders.addAll(future.join());
-        }
-        return allOrders;
-    }
-
     public List<Order> findByUserId(UUID userId) {
         JdbcTemplate template = shardTemplates[shardedDataSource.getShardIndex(userId)];
         return template.query(OrderSql.FIND_BY_USER_ID, ORDER_ROW_MAPPER, userId);
@@ -117,8 +94,9 @@ public class OrderRepository implements org.learn.repository.OrderRepository {
         JdbcTemplate template = shardTemplates[shardedDataSource.getShardIndex(order.getUser().getUser_id())];
 
         if (order.getOrder_id() == null) {
+            LocalDateTime orderDate = order.getOrderDate() != null ? order.getOrderDate() : LocalDateTime.now();
             template.update(OrderSql.INSERT,
-                    UUID.randomUUID(), order.getUser().getUser_id(),
+                    UUID.randomUUID(), order.getUser().getUser_id(), orderDate,
                     order.getTotalAmount(), order.getOrderStatus());
         } else {
             template.update(OrderSql.UPDATE,

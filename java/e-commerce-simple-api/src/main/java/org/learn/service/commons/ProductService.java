@@ -6,8 +6,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Service;
 
-import java.math.BigDecimal;
-import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -22,9 +20,5 @@ public class ProductService implements org.learn.service.ProductService {
 
     public Optional<Product> findByUuid(UUID productId) {
         return productRepository.findById(productId);
-    }
-
-    public List<Product> getAllProducts() {
-        return productRepository.findAll();
     }
 }

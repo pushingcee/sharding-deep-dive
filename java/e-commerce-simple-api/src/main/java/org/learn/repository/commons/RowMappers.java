@@ -1,7 +1,9 @@
 package org.learn.repository.commons;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.learn.domain.Order;
 import org.learn.domain.User;
+import org.learn.domain.product.BaseSpec;
 import org.learn.domain.product.Product;
 import org.springframework.jdbc.core.RowMapper;
 
@@ -10,6 +12,8 @@ import java.time.OffsetDateTime;
 import java.util.UUID;
 
 public class RowMappers {
+
+    private static final ObjectMapper SPEC_MAPPER = new ObjectMapper();
 
     /**
      * Maps a row produced by {@link OrderSql#ORDER_COLS} (orders joined to
@@ -58,6 +62,15 @@ public class RowMappers {
             product.setDescription(rs.getString("description"));
             product.setPrice(rs.getBigDecimal("price"));
             product.setCategory(rs.getString("category"));
+            String specs = rs.getString("technical_specs");
+            if (specs != null) {
+                try {
+                    product.setBaseSpec(SPEC_MAPPER.readValue(specs, BaseSpec.class));
+                } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                    throw new IllegalStateException(
+                        "Unparseable technical_specs for product " + product.getProduct_id(), e);
+                }
+            }
             return product;
     };
 
