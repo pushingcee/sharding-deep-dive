@@ -1,94 +1,53 @@
-#!/usr/bin/env python3
 import logging
-import sys
 from typing import Any, Callable
 
 import psycopg
-from psycopg import Connection, Cursor
+from psycopg import Cursor
 
 from utilities.citus import create_tables as create_tables_single_shard
 from utilities.config import DbConfig
-from utilities.connection_manager import connect_to_shards, close_shard_connections
-from utilities.constants import EXIT_FAILURE, MAIN_DB_CONFIG
+from utilities.constants import MAIN_DB_CONFIG
 from utilities.queries import create_tables as create_tables_base, create_lookup_table
 
 
 class TableManager:
+    """Creates schemas per mode. Raises on failure — exit codes are
+    db_setup.main's job, not library code's."""
+
     def __init__(self, logger_name: str = 'dbsetup.tables') -> None:
         self.logger = logging.getLogger(logger_name)
 
     def create_tables(self, params: DbConfig | tuple[DbConfig, ...], mode: str) -> None:
-        self.logger.info(f"Attempting to create tables for mode: '{mode}'...")
+        self.logger.info(f"Creating tables for mode: '{mode}'...")
         if mode == "single":
-            assert isinstance(params, DbConfig)
-            self._create_tables_single(params)
+            self._create_tables_on(self._require_single(params, mode), create_tables_base)
         elif mode == "single-shard":
-            assert isinstance(params, DbConfig)
-            self._create_tables_single_shard(params)
+            self._create_tables_on(self._require_single(params, mode), create_tables_single_shard)
         elif mode == "sharded":
-            assert isinstance(params, tuple)
-            self._create_tables_sharded(params)
+            for config in self._require_shards(params, mode):
+                self._create_tables_on(config, create_tables_base)
         elif mode == "sharded-lookup-table":
-            assert isinstance(params, tuple)
-            self._create_tables_lookup(params)
+            self._create_tables_on(MAIN_DB_CONFIG, create_lookup_table)
+            for config in self._require_shards(params, mode):
+                self._create_tables_on(config, create_tables_base)
         else:
-            self.logger.error(f"Invalid mode: {mode}")
-            sys.exit(EXIT_FAILURE)
+            raise ValueError(f"Invalid mode: {mode}")
+        self.logger.info(f"Table creation complete for mode: '{mode}'.")
 
-    def _create_tables_single(self, params: DbConfig) -> None:
-        try:
-            with psycopg.connect(str(params), autocommit=True) as conn:
-                with conn.cursor() as cur:
-                    create_tables_base(cur)
-        except Exception as e:
-            self.logger.error(f"Error creating tables for 'single' mode: {e}")
-            sys.exit(EXIT_FAILURE)
+    def _create_tables_on(self, config: DbConfig, statement_executor: Callable[[Cursor[Any]], None]) -> None:
+        with psycopg.connect(config.conninfo, autocommit=True) as conn:
+            with conn.cursor() as cur:
+                statement_executor(cur)
+        self.logger.debug(f"Tables created on {config}")
 
-    def _create_tables_single_shard(self, params: DbConfig) -> None:
-        try:
-            with psycopg.connect(str(params), autocommit=True) as conn:
-                with conn.cursor() as cur:
-                    create_tables_single_shard(cur)
-        except Exception as e:
-            self.logger.error(f"Error creating tables for 'single-shard' mode: {e}")
-            sys.exit(EXIT_FAILURE)
+    @staticmethod
+    def _require_single(params: DbConfig | tuple[DbConfig, ...], mode: str) -> DbConfig:
+        if not isinstance(params, DbConfig):
+            raise TypeError(f"Mode '{mode}' requires a single DbConfig, got {type(params).__name__}")
+        return params
 
-    def _create_tables_sharded(self, params: tuple[DbConfig, ...]) -> None:
-        for i, shard_info in enumerate(params):
-            try:
-                with psycopg.connect(str(shard_info), autocommit=True) as conn:
-                    with conn.cursor() as cur:
-                        create_tables_base(cur)
-            except Exception as e:
-                self.logger.error(f"Error creating tables for shard {i + 1} ('sharded' mode): {e}")
-                sys.exit(EXIT_FAILURE)
-
-    def _create_tables_lookup(self, params: tuple[DbConfig, ...]) -> None:
-        try:
-            with psycopg.connect(str(MAIN_DB_CONFIG), autocommit=True) as conn:
-                with conn.cursor() as cur:
-                    create_lookup_table(cur)
-        except psycopg.OperationalError as e:
-            self.logger.error(f"Error creating lookup table: {e}")
-            sys.exit(EXIT_FAILURE)
-
-        shard_connections = connect_to_shards(params, self.logger)
-        try:
-            self._execute_on_shards(shard_connections, create_tables_base, "table creation")
-        finally:
-            close_shard_connections(shard_connections, self.logger)
-
-    def _execute_on_shards(
-        self,
-        connections: list[Connection],
-        statement_executor: Callable[[Cursor[Any]], None],
-        operation_name: str = "table operation",
-    ) -> None:
-        for i, conn in enumerate(connections):
-            try:
-                with conn.cursor() as cur:
-                    statement_executor(cur)
-                    self.logger.debug(f"Executed {operation_name} on Shard {i + 1}")
-            except Exception as e:
-                self.logger.error(f"Error executing {operation_name} on shard {i + 1}: {e}")
-                sys.exit(EXIT_FAILURE)
+    @staticmethod
+    def _require_shards(params: DbConfig | tuple[DbConfig, ...], mode: str) -> tuple[DbConfig, ...]:
+        if not isinstance(params, tuple):
+            raise TypeError(f"Mode '{mode}' requires a tuple of shard DbConfigs, got {type(params).__name__}")
+        return params

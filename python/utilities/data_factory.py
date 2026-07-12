@@ -1,6 +1,5 @@
 import json
 import random
-import string
 import uuid
 from datetime import date, datetime, timedelta
 from typing import Any, NamedTuple
@@ -47,14 +46,24 @@ class Order(NamedTuple):
 
 
 class DataFactory:
-    fake: Faker
+    """Fake-data factory.
 
-    def __init__(self) -> None:
+    Instances are NOT thread-safe (Faker and random.Random both keep mutable
+    state), so concurrent generators must use one instance per thread — see
+    utilities.generators.base.get_factory(). Each instance owns its RNGs:
+    pass ``seed`` for reproducible output (used by the single-threaded CSV
+    generation path).
+    """
+
+    def __init__(self, seed: int | None = None) -> None:
         self.fake = Faker()
+        if seed is not None:
+            self.fake.seed_instance(seed)
+        self.rng = random.Random(seed)
 
     def generate_orders_for_user(self, user_id: uuid.UUID, user_created_at: datetime) -> Order:
         order_date = self.fake.date_time_between(start_date=user_created_at, end_date="now", tzinfo=None)
-        total_amount = round(random.uniform(MIN_ORDER_AMOUNT, MAX_ORDER_AMOUNT), ORDER_AMOUNT_DECIMAL_PLACES)
+        total_amount = round(self.rng.uniform(MIN_ORDER_AMOUNT, MAX_ORDER_AMOUNT), ORDER_AMOUNT_DECIMAL_PLACES)
         status = self.fake.random_element(ORDER_STATUSES)
         return Order(
             user_id=user_id,
@@ -126,7 +135,7 @@ class DataFactory:
     def generate_product(self) -> Product:
         product_uuid = uuid.uuid4()
         name = self.fake.word().capitalize() + " " + self.fake.bs().split(' ')[-1]
-        price = round(random.uniform(5.0, 2500.0), 2)
+        price = round(self.rng.uniform(5.0, 2500.0), 2)
         category = self.fake.random_element(CATEGORIES)
         technical_specs = self.generate_technical_specs(category)
         description = self.fake.paragraph(nb_sentences=3)
@@ -141,9 +150,16 @@ class DataFactory:
 
     def generate_user(self, sharded: bool = False) -> User:
         user_uuid = uuid.uuid4()
-        email = self.fake.unique.email() + "".join(random.choices(string.ascii_lowercase, k=5))
         first_name = self.fake.first_name()
         last_name = self.fake.last_name()
+        # Unique by construction: the UUID fragment guarantees no collision on
+        # the users.email UNIQUE constraint across threads and batches, without
+        # fake.unique's shared state (not thread-safe) or its exhaustion limit
+        # on large seeds.
+        local_part = "".join(
+            ch for ch in f"{first_name}.{last_name}".lower() if ch.isalnum() or ch == "."
+        )
+        email = f"{local_part}.{user_uuid.hex[:8]}@{self.fake.free_email_domain()}"
         country = self.fake.country_code()
         created_at = self.fake.date_time_between(start_date='-20y', end_date='now', tzinfo=None)
         last_active = self.fake.date_between(start_date='-20y', end_date='+30d') if self.fake.boolean() else None
@@ -163,7 +179,7 @@ class DataFactory:
 
     def generate_technical_specs(self, category: str) -> str:
         base_specs: dict[str, Any] = {
-            "weight_kg": round(random.uniform(0.1, 25.0), 2),
+            "weight_kg": round(self.rng.uniform(0.1, 25.0), 2),
             "material": self.fake.random_element(
                 ("Plastic", "Metal", "Wood", "Fabric", "Composite", "Ceramic", "Glass")
             ),
@@ -206,12 +222,12 @@ class DataFactory:
         elif category == 'Home':
             base_specs.update({
                 "dimensions_cm": {
-                    "width": round(random.uniform(10, 200), 1),
-                    "height": round(random.uniform(10, 200), 1),
-                    "depth": round(random.uniform(5, 100), 1),
+                    "width": round(self.rng.uniform(10, 200), 1),
+                    "height": round(self.rng.uniform(10, 200), 1),
+                    "depth": round(self.rng.uniform(5, 100), 1),
                 },
                 "power_watts": self.fake.random_int(50, 2500) if self.fake.boolean(chance_of_getting_true=40) else None,
-                "capacity_liters": round(random.uniform(0.5, 50), 1) if self.fake.boolean(chance_of_getting_true=30) else None,
+                "capacity_liters": round(self.rng.uniform(0.5, 50), 1) if self.fake.boolean(chance_of_getting_true=30) else None,
                 "assembly_required": self.fake.boolean(chance_of_getting_true=20),
             })
         elif category == 'Outdoor':
@@ -221,9 +237,9 @@ class DataFactory:
                 ) if self.fake.boolean(chance_of_getting_true=60) else "Not Rated",
                 "temperature_rating_c": self.fake.random_int(-20, 15) if self.fake.boolean(chance_of_getting_true=30) else None,
                 "packed_dimensions_cm": {
-                    "width": round(random.uniform(5, 50), 1),
-                    "height": round(random.uniform(5, 80), 1),
-                    "depth": round(random.uniform(2, 30), 1),
+                    "width": round(self.rng.uniform(5, 50), 1),
+                    "height": round(self.rng.uniform(5, 80), 1),
+                    "depth": round(self.rng.uniform(2, 30), 1),
                 },
                 "load_capacity_kg": self.fake.random_int(5, 150) if self.fake.boolean(chance_of_getting_true=40) else None,
             })

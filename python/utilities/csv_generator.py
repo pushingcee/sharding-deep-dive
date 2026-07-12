@@ -2,7 +2,6 @@
 import csv
 import io
 import logging
-import random
 import uuid
 from pathlib import Path
 from typing import Any
@@ -67,10 +66,12 @@ class CsvGenerator:
         USERS_INDEX, ORDERS_INDEX, ORDER_ITEMS_INDEX,
     )
 
-    def __init__(self, data_dir: Path, logger_name: str = "dbsetup.csv_generator") -> None:
+    def __init__(self, data_dir: Path, logger_name: str = "dbsetup.csv_generator", seed: int | None = None) -> None:
         self.data_dir = data_dir
         self.logger = logging.getLogger(logger_name)
-        self._factory = DataFactory()
+        # CSV generation is single-threaded, so one seeded factory makes the
+        # whole dataset reproducible: same seed → same CSVs.
+        self._factory = DataFactory(seed=seed)
 
     def data_exists(self) -> bool:
         return all((self.data_dir / f).exists() for f in self._REQUIRED_FILES)
@@ -159,7 +160,7 @@ class CsvGenerator:
                 o_start = o_f.tell()
                 oi_start = oi_f.tell()
 
-                num_orders = random.randint(
+                num_orders = self._factory.rng.randint(
                     max(0, orders_per_user - ORDERS_VARIANCE),
                     orders_per_user + ORDERS_VARIANCE,
                 )
@@ -172,14 +173,14 @@ class CsvGenerator:
                     ]))
 
                     num_items = min(
-                        random.randint(
+                        self._factory.rng.randint(
                             max(MIN_ITEMS_PER_ORDER, items_per_order - ITEMS_VARIANCE),
                             items_per_order + ITEMS_VARIANCE,
                         ),
                         len(product_uuids),
                     )
-                    for product_uuid in random.sample(product_uuids, num_items):
-                        quantity = random.randint(MIN_QUANTITY_PER_ITEM, MAX_QUANTITY_PER_ITEM)
+                    for product_uuid in self._factory.rng.sample(product_uuids, num_items):
+                        quantity = self._factory.rng.randint(MIN_QUANTITY_PER_ITEM, MAX_QUANTITY_PER_ITEM)
                         oi_f.write(_row_to_bytes([order_uuid, product_uuid, quantity]))
 
                 o_idx.write(f"{user.user_uuid},{o_start},{o_f.tell()}\n")

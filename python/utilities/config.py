@@ -1,27 +1,19 @@
 from dataclasses import dataclass
 
-@dataclass
+
+@dataclass(frozen=True)
 class DbConfig:
     host: str = "localhost"
     port: int = 5432
     dbname: str = "mydb"
     user: str = "postgres"
     password: str = ""
-    
-    def __str__(self) -> str:
+
+    @property
+    def conninfo(self) -> str:
+        """psycopg connection string. Only this property carries the password —
+        __str__ stays safe to log."""
         return f"host={self.host} port={self.port} dbname={self.dbname} user={self.user} password={self.password}"
-    
-    def to_dict(self) -> dict[str, str | int]:
-        """Convert to dictionary for psycopg connection."""
-        return {
-            "host": self.host,
-            "port": self.port,
-            "dbname": self.dbname,
-            "user": self.user,
-            "password": self.password
-        }
-    
-    def __getitem__(self, key: str) -> str | int:
-        """Support dict-like access for backward compatibility."""
-        value: str | int = getattr(self, key)
-        return value
+
+    def __str__(self) -> str:
+        return f"{self.host}:{self.port}/{self.dbname}"
